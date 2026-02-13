@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wolfenstein-Style Procedural Maze</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #08090c;
+        font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+      }
+
+      #app,
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      #overlay {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at center, rgba(11, 14, 20, 0.7), rgba(4, 5, 8, 0.93));
+        z-index: 4;
+      }
+
+      #overlay.hidden {
+        display: none;
+      }
+
+      .panel {
+        width: min(520px, 92vw);
+        padding: 1.6rem;
+        border: 1px solid #8892a633;
+        border-radius: 14px;
+        background: #0d1019f0;
+        box-shadow: 0 14px 40px #000a;
+      }
+
+      .panel h1 {
+        margin: 0 0 0.5rem;
+        letter-spacing: 0.1rem;
+        font-size: 1.5rem;
+        text-transform: uppercase;
+      }
+
+      .panel p {
+        margin: 0.4rem 0;
+        color: #d8deeb;
+      }
+
+      .panel button {
+        margin-top: 1rem;
+        padding: 0.7rem 1.2rem;
+        border: 1px solid #a6e5ff66;
+        border-radius: 10px;
+        cursor: pointer;
+        color: #eff8ff;
+        background: linear-gradient(180deg, #375f86, #274762);
+        font: inherit;
+      }
+
+      #status {
+        position: fixed;
+        top: 0.85rem;
+        left: 0.9rem;
+        z-index: 3;
+        color: #f2f5ff;
+        font-size: 0.9rem;
+        text-shadow: 0 1px 4px #000;
+      }
+
+      #crosshair {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 22px;
+        height: 22px;
+        pointer-events: none;
+        z-index: 2;
+      }
+
+      #crosshair::before,
+      #crosshair::after {
+        content: "";
+        position: absolute;
+        background: #f3f6ffcb;
+      }
+
+      #crosshair::before {
+        width: 2px;
+        height: 22px;
+        left: 10px;
+        top: 0;
+      }
+
+      #crosshair::after {
+        width: 22px;
+        height: 2px;
+        left: 0;
+        top: 10px;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.182.0/build/three.module.js",
+          "three-mesh-bvh": "https://esm.sh/three-mesh-bvh@0.8.0?target=es2022",
+          "three/addons/": "https://unpkg.com/three@0.182.0/examples/jsm/",
+          "three/examples/jsm/": "https://unpkg.com/three@0.182.0/examples/jsm/",
+          "n8ao": "https://esm.sh/n8ao@1.10.1?external=three&target=es2022"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="overlay">
+      <div class="panel">
+        <h1>Procedural Maze</h1>
+        <p>Find the red exit marker in a freshly generated maze.</p>
+        <p>Move: <strong>WASD / Arrow Keys</strong></p>
+        <p>Look: <strong>Mouse</strong> (pointer lock)</p>
+        <p>Sprint: <strong>Shift</strong> | Flashlight: <strong>L</strong> | View: <strong>V</strong> | Fullscreen: <strong>F</strong> | New maze: <strong>N</strong></p>
+        <button id="start-btn" type="button">Enter Maze</button>
+      </div>
+    </div>
+
+    <div id="status" aria-live="polite"></div>
+    <div id="crosshair" aria-hidden="true"></div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

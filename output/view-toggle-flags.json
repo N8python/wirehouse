@@ -1,0 +1,16 @@
+{
+  "topdown": {
+    "pointerLocked": false,
+    "won": false,
+    "gameActive": true,
+    "topDownView": true,
+    "sprinting": false
+  },
+  "firstperson": {
+    "pointerLocked": false,
+    "won": false,
+    "gameActive": true,
+    "topDownView": false,
+    "sprinting": false
+  }
+}

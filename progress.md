@@ -1,0 +1,107 @@
+Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedurally generate a maze. Use HTML + JS. Make sure to research modern threejs practices. YOu should be able to nagivate around the maze in first person.
+
+## Progress
+- Scaffolded `index.html` with an import map for modern Three.js ESM (`three` + `three/addons`), a start overlay, and minimal HUD elements.
+- Implemented `main.js` with:
+  - Procedural maze generation via recursive backtracking.
+  - First-person camera movement with collision checks against maze walls.
+  - Pointer lock controls, fullscreen toggle (`F`), and regeneration (`N`).
+  - Instanced wall rendering for low draw calls.
+  - `window.render_game_to_text()` and `window.advanceTime(ms)` hooks for automated testing.
+- Added automation-friendly gameplay activation for webdriver/headless runs while preserving pointer lock for normal browser sessions.
+- Updated spawn orientation to face the first valid corridor step, improving immediate forward movement and validation.
+- Installed local `playwright` dev dependency to run the skill’s test loop in this workspace.
+- Verified with the Playwright client:
+  - `output/web-game/shot-0.png`, `shot-1.png`, `shot-2.png` show in-maze first-person gameplay.
+  - `output/web-game/state-*.json` confirms movement across cells and active play mode.
+  - No `errors-*.json` emitted in final run.
+- Verified responsive rendering:
+  - Desktop: `output/responsive/desktop-menu.png`, `output/responsive/desktop-gameplay.png`
+  - Mobile: `output/responsive/mobile-menu.png`, `output/responsive/mobile-gameplay.png`
+- Adjusted floor texture tiling so UV repeats map 1:1 with maze cells and added a clearer single-cell floor tile pattern for grid alignment.
+- Verified updated alignment in `output/floor-aligned-check.png`.
+- Inset wall geometry footprint (`WALL_FOOTPRINT = CELL_SIZE - WALL_CELL_INSET`) so wall meshes stay inside their assigned cells.
+- Verified updated wall bounds in `output/wall-cell-check.png`.
+- Replaced uniform wall inset with edge-aware inset: only edges facing open cells are inset, while wall-to-wall shared edges remain flush to remove visible seams/holes.
+- Verified seam fix in `output/wall-seam-fix-check.png`.
+- Added `V` key view toggle between first-person and top-down cameras while preserving player state/position.
+- Updated overlay controls text to include `V` for view switching.
+- Verified view switching with `output/topdown-view-check.png`, `output/firstperson-view-check.png`, and no runtime errors in `output/view-toggle-errors.json`.
+- Fixed top-down floor visibility by rendering top-down without fog and centering/fitting the top-down camera over the full maze.
+- Verified visibility fix in `output/topdown-floor-visible-check.png` and ensured first-person remained correct in `output/firstperson-after-topdown-check.png`.
+- Added externally sourced spooky PBR textures (wall + floor) from Poly Haven (CC0) under `assets/textures/`.
+- Replaced procedural canvas materials with texture-loaded `MeshStandardMaterial` maps:
+  - Floor: color + normal + roughness maps with cell-aligned tiling.
+  - Walls: color + normal + roughness maps.
+- Added `assets/textures/CREDITS.md` with license and source attribution links.
+- Verified renders:
+  - First-person: `output/spooky-firstperson.png`
+  - Top-down: `output/spooky-topdown.png`
+  - Runtime errors: none in `output/spooky-errors.json`
+- Replaced wall instancing-over-boxes with voxel face meshing: only faces adjacent to air are emitted as geometry (`buildWallSurfaceGeometry`), preventing wall cube overlap/poke-through at corners.
+- Verified corner/intersection visuals in:
+  - `output/voxel-wall-corner-check-1.png`
+  - `output/voxel-wall-corner-check-2.png`
+  - `output/voxel-wall-topdown-check.png`
+  - Runtime errors: none in `output/voxel-wall-errors.json`
+- Restyled scene toward abandoned industrial facility:
+  - Walls -> `factory_wall` texture set.
+  - Floor -> `metal_plate_02` texture set.
+  - Roof -> `rusty_metal_05` texture set.
+- Added enclosed roof mesh with PBR textures; roof is hidden only in top-down mode to keep map readability.
+- Added player flashlight (`SpotLight`) attached to camera with `L` toggle and state flag in `render_game_to_text`.
+- Tuned lighting to darker low-ambient atmosphere plus stronger flashlight beam for gameplay readability.
+- Removed all directional scene lighting (to match enclosed facility logic). Replaced top-down helper directional with temporary ambient fill light used only in top-down render.
+- Updated controls text/status messaging to include flashlight key.
+- Updated texture attribution file `assets/textures/CREDITS.md` for active wall/floor/roof sources (Poly Haven CC0).
+- Verified outputs:
+  - `output/facility-v2-flashlight-on.png`
+- Added a flashlight model (`assets/models/old_flashlight.glb`) and mounted it on a camera-attached flashlight rig.
+- Beam origin now emanates from the flashlight model head (spotlight + target attached to same rig).
+- Added `flashlightModelLoaded` state flag in `render_game_to_text`.
+- Updated credits file with model attribution (Sketchfab, Blender3D, CC BY 4.0).
+- Verified model + beam behavior:
+  - `output/flashlight-model-on.png`
+  - `output/flashlight-model-off.png`
+  - `output/flashlight-model-topdown.png`
+  - Runtime errors: none in `output/flashlight-model-errors.json`
+- Replaced heuristic flashlight orientation with deterministic orientation:
+  - align model by dominant axis,
+  - detect larger end-cap as flashlight head,
+  - place spotlight origin/target from that computed tip.
+- Verified updated orientation/beam behavior:
+  - `output/flashlight-facing-check-on.png`
+  - `output/flashlight-facing-check-off.png`
+  - Runtime errors: none in `output/flashlight-facing-errors.json`
+  - `output/facility-v2-flashlight-off.png`
+  - `output/facility-v2-topdown.png`
+  - Runtime errors: none in `output/facility-v2-errors.json`
+- Added flashlight cookie/gobo projection map from OpenGameArt and assigned it to `SpotLight.map` for patterned beam projection.
+- Added attribution for the new flashlight map to `assets/textures/CREDITS.md` (creator, page link, CC0 license URL, file used).
+- Verified beam-map integration via Playwright loop:
+  - `output/flashlight-pattern/shot-0.png`
+  - `output/flashlight-pattern/shot-1.png`
+  - `output/flashlight-pattern/shot-2.png`
+  - `output/flashlight-pattern/state-0.json`
+  - `output/flashlight-pattern/state-1.json`
+  - `output/flashlight-pattern/state-2.json`
+  - Runtime errors: none emitted in this run.
+
+## TODO
+- Optional: add touch controls (virtual joystick/look) for mobile playability beyond layout compatibility.
+- Optional: add additional wall/floor texture variations and props for richer Wolfenstein-era styling.
+- Optimized POM shader path and benchmarked impact using headless Playwright + SwiftShader with render-count FPS probe (`window.__mazePerf.renderedFrames`) over fixed windows.
+- Added lightweight perf instrumentation: `window.__mazePerf = { renderedFrames, startTimeMs }`, incremented once per rendered frame in `animationFrame`.
+- POM optimization changes:
+  - Added floor/ceiling-specific POM layer budgets (`FLOOR_POM_MIN/MAX_LAYERS=2/6`, `ROOF_POM_MIN/MAX_LAYERS=2/6`) while keeping wall quality controls separate.
+  - Replaced expensive `pow(luma, 1.2)` in height sampling with cubic smoothstep shaping (`h*h*(3-2*h)`).
+  - Added early-out for tiny projected parallax (`length(proj) * heightScale <= 0.0015`) to skip raymarch where effect is visually negligible.
+  - Reduced binary refinement iterations from 5 to 3.
+  - Simplified analytic gradient offset term by dropping `d(finalTravel)` contribution and keeping camera-projection-driven derivative term.
+- Benchmark (pre-optimization, same script shape, 1280x720, 5s windows):
+  - `pom=0.000`: 1.5996 FPS
+  - `pom=1.000`: 1.3996 FPS
+- Benchmark (post-optimization, same harness):
+  - `pom=0.000`: 1.9994 FPS
+  - `pom=1.000`: 1.5999 FPS
+- Observed in this environment: approx +25.0% at `pom=0` and +14.3% at `pom=1` versus the earlier baseline run.

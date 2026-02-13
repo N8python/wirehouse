@@ -1,0 +1,18 @@
+{
+  "off": {
+    "pointerLocked": false,
+    "won": false,
+    "gameActive": true,
+    "topDownView": false,
+    "flashlightOn": false,
+    "sprinting": false
+  },
+  "top": {
+    "pointerLocked": false,
+    "won": false,
+    "gameActive": true,
+    "topDownView": true,
+    "flashlightOn": true,
+    "sprinting": false
+  }
+}
