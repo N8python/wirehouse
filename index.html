@@ -81,6 +81,54 @@
         text-shadow: 0 1px 4px #000;
       }
 
+      #buff-icons {
+        position: fixed;
+        top: 0.85rem;
+        right: 0.9rem;
+        z-index: 3;
+        display: grid;
+        gap: 0.4rem;
+        pointer-events: none;
+      }
+
+      .buff-indicator {
+        display: none;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.32rem 0.52rem;
+        border: 1px solid #86a5c257;
+        border-radius: 999px;
+        background: #0f1722cb;
+        color: #eaf3ff;
+        font-size: 0.76rem;
+        text-shadow: 0 1px 4px #000;
+      }
+
+      .buff-indicator.active {
+        display: inline-flex;
+      }
+
+      .buff-icon {
+        display: grid;
+        place-items: center;
+        width: 1.1rem;
+        height: 1.1rem;
+        border-radius: 50%;
+        background: #24405f;
+        color: #d3e9ff;
+        font-size: 0.56rem;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        font-weight: 700;
+      }
+
+      .buff-timer {
+        min-width: 2.6rem;
+        text-align: right;
+        font-family: monospace;
+        color: #b9d4ff;
+      }
+
       #inventory-wheel {
         position: fixed;
         right: 1rem;
@@ -89,6 +137,97 @@
         width: 260px;
         height: 260px;
         pointer-events: none;
+      }
+
+      #health-wheel {
+        position: fixed;
+        left: 1rem;
+        bottom: 1rem;
+        z-index: 3;
+        width: 260px;
+        height: 260px;
+        pointer-events: none;
+      }
+
+      #health-ring-track {
+        position: absolute;
+        inset: 10px;
+        border-radius: 50%;
+        background: #5b1f29a0;
+        box-shadow: inset 0 1px 5px #0009;
+        -webkit-mask: radial-gradient(
+          farthest-side,
+          transparent calc(100% - 14px),
+          #000 calc(100% - 13px)
+        );
+        mask: radial-gradient(
+          farthest-side,
+          transparent calc(100% - 14px),
+          #000 calc(100% - 13px)
+        );
+      }
+
+      #health-ring-loss,
+      #health-ring-fill {
+        position: absolute;
+        inset: 10px;
+        border-radius: 50%;
+        -webkit-mask: radial-gradient(
+          farthest-side,
+          transparent calc(100% - 14px),
+          #000 calc(100% - 13px)
+        );
+        mask: radial-gradient(
+          farthest-side,
+          transparent calc(100% - 14px),
+          #000 calc(100% - 13px)
+        );
+      }
+
+      #health-ring-fill {
+        --health-progress: 100;
+        background: conic-gradient(
+          from -90deg,
+          #e95f70 0 calc(var(--health-progress) * 1%),
+          #4b1e25 calc(var(--health-progress) * 1%) 100%
+        );
+        filter: drop-shadow(0 0 10px #da4e5d38);
+      }
+
+      #health-ring-loss {
+        --health-progress: 100;
+        --health-loss-progress: 100;
+        background: conic-gradient(
+          from -90deg,
+          transparent 0 calc(var(--health-progress) * 1%),
+          #f6f7ffff calc(var(--health-progress) * 1%) calc(var(--health-loss-progress) * 1%),
+          transparent calc(var(--health-loss-progress) * 1%) 100%
+        );
+      }
+
+      #health-center {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 96px;
+        height: 96px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #b77d8461;
+        border-radius: 50%;
+        background: #1a1013d2;
+        text-shadow: 0 1px 4px #000;
+      }
+
+      #health-heart-image {
+        width: 74px;
+        height: 74px;
+        object-fit: contain;
+        display: inline-block;
+        filter: drop-shadow(0 1px 3px #0009);
+        transform-origin: 50% 50%;
+        will-change: transform;
       }
 
       #inventory-radial {
@@ -156,6 +295,52 @@
         text-shadow: 0 1px 5px #000;
       }
 
+      #consume-progress {
+        position: fixed;
+        left: 50%;
+        top: calc(50% + 44px);
+        transform: translateX(-50%);
+        z-index: 4;
+        width: min(270px, 56vw);
+        opacity: 0;
+        pointer-events: none;
+        padding: 0.32rem 0.4rem;
+        border: 1px solid #9c8ab34a;
+        border-radius: 10px;
+        background: #130d18c7;
+        backdrop-filter: blur(2px);
+      }
+
+      #consume-progress.active {
+        opacity: 1;
+      }
+
+      #consume-progress-label {
+        min-height: 1rem;
+        margin-bottom: 0.35rem;
+        text-align: center;
+        color: #f2f7ff;
+        font-size: 0.88rem;
+        text-shadow: 0 1px 5px #000;
+      }
+
+      #consume-progress-track {
+        height: 10px;
+        border: 1px solid #9a85a95f;
+        border-radius: 999px;
+        background: #160f1ed9;
+        box-shadow: inset 0 1px 3px #0009;
+        overflow: hidden;
+      }
+
+      #consume-progress-fill {
+        width: 0%;
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #d68ab4, #ffd7e8);
+        box-shadow: 0 0 10px #f1b9d74f;
+      }
+
       #crosshair {
         position: fixed;
         top: 50%;
@@ -210,17 +395,47 @@
         <p>Move: <strong>WASD</strong></p>
         <p>Inventory pivot: <strong>Left / Right Arrow</strong></p>
         <p>Look: <strong>Mouse</strong> (pointer lock)</p>
-        <p>Sprint: <strong>Shift</strong> | Flashlight: <strong>L</strong> | Pickup: <strong>E</strong> | Melee (knife/bat): <strong>Left Click</strong> | View: <strong>V</strong> | AO debug: <strong>O</strong> | Bounce debug: <strong>B</strong> | Fullscreen: <strong>F</strong> | New maze: <strong>N</strong></p>
+        <p>Sprint: <strong>Shift</strong> | Flashlight: <strong>L</strong> | Pickup: <strong>E</strong> | Left Click: <strong>Melee/fire weapon or hold to consume selected item (jerky/first aid/soda)</strong> | Debug loadout + infinite pistol ammo: <strong>I</strong> | Pistol impact debug: <strong>P</strong> | Test damage: <strong>T</strong> | View: <strong>V</strong> | AO debug: <strong>O</strong> | Bounce debug: <strong>B</strong> | Fullscreen: <strong>F</strong> | New maze: <strong>N</strong></p>
         <button id="start-btn" type="button">Enter Maze</button>
       </div>
     </div>
 
     <div id="status" aria-live="polite"></div>
+    <div id="buff-icons" aria-live="polite">
+      <div id="regen-indicator" class="buff-indicator">
+        <span class="buff-icon" aria-hidden="true">+</span>
+        <span>Regen</span>
+        <span id="regen-timer" class="buff-timer"></span>
+      </div>
+      <div id="soda-boost-indicator" class="buff-indicator">
+        <span class="buff-icon" aria-hidden="true">&gt;&gt;</span>
+        <span>Soda Boost</span>
+        <span id="soda-boost-timer" class="buff-timer"></span>
+      </div>
+    </div>
+    <div id="health-wheel" aria-live="polite">
+      <div id="health-ring-track"></div>
+      <div id="health-ring-fill"></div>
+      <div id="health-ring-loss"></div>
+      <div id="health-center">
+        <img
+          id="health-heart-image"
+          src="./assets/textures/ui/red-heart-illustration.png"
+          alt="Health"
+        />
+      </div>
+    </div>
     <div id="inventory-wheel" aria-live="polite">
       <div id="inventory-radial"></div>
       <div id="inventory-center">Inventory<br /><span id="inventory-count">0/8</span></div>
     </div>
     <div id="interaction-hint" aria-live="polite"></div>
+    <div id="consume-progress" aria-live="polite">
+      <div id="consume-progress-label"></div>
+      <div id="consume-progress-track">
+        <div id="consume-progress-fill"></div>
+      </div>
+    </div>
     <div id="crosshair" aria-hidden="true"></div>
 
     <script type="module" src="./main.js"></script>

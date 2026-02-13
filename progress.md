@@ -104,6 +104,140 @@ Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedu
   - Confirmed in state trace:
     - Knife left-click sets `flags.meleeSwinging=true` and non-zero cooldown, then returns to idle.
     - Rotating selection to bat and left-clicking does the same with bat-specific cooldown/range metadata.
+- Added pistol firing on left-click when `pistol_01` is selected:
+  - New pistol combat state in `src/game.js` (`pistolFireCooldownRemaining`, `pistolInfiniteAmmo`) and left-click routing to pistol first, melee fallback.
+  - Default pistol behavior consumes one `bullet_01` per shot; empty magazine blocks firing with status feedback.
+  - Pressing `I` (debug inventory loadout) now enables infinite pistol ammo as requested.
+- Added bullet impact decals with `DecalGeometry`:
+  - Imported `DecalGeometry` from `three/addons/geometries/DecalGeometry.js`.
+  - Loaded CC0 bullet-hole texture at `assets/textures/decals/bullet-hole-impact-cc0.png`.
+  - Spawned decals on pistol hits against wall/prop meshes with capped decal count and cleanup on maze regenerate.
+- Added attribution for decal texture in `assets/textures/CREDITS.md`:
+  - Source: OpenGameArt `Bullet Decal` by musdasch (CC0 1.0).
+- Added additional debug/test observability:
+  - `render_game_to_text` now includes pistol/ammo/decal state (`flags.pistolInfiniteAmmo`, `flags.pistolCooldownSeconds`, `ammo`, `decals`).
+  - Added debug hooks:
+    - `window.__debugSetPistolInfiniteAmmo(enabled)`
+    - `window.__debugGetPistolInfiniteAmmo()`
+    - `window.__debugGetBulletAmmoCount()`
+    - `window.__debugGetBulletDecalCount()`
+- Validation runs:
+  - Skill client smoke: `output/pistol-smoke-client/shot-0.png`, `output/pistol-smoke-client/state-0.json` (no `errors-*.json`).
+  - Focused pistol validation:
+    - Screenshots: `output/pistol-validation/finite-first-shot.png`, `output/pistol-validation/infinite-shots.png`
+    - State trace: `output/pistol-validation/states.json`
+    - Confirmed behavior:
+      - Finite mode: ammo `1 -> 0` after first shot, second shot blocked at `0`, decals unchanged on blocked shot.
+      - Infinite mode after `I`: ammo stays constant while shots continue and decal count increases (`1 -> 3` in run).
+    - Console/page errors: none (`output/pistol-validation/console-errors.json` not created).
+- Extended pistol impact/debug/FX behavior:
+  - Added floor + ceiling hit classification and decal placement in `src/game.js`.
+  - Enforced bullet decal cap to 10 with FIFO eviction (oldest decal removed when a new one exceeds cap).
+  - Added debug interactions for props (`window.__debugShootPistolAtNearestProp()` + hit/status reporting).
+  - Added pistol impact debug toggle on `P`; overlay/config hints updated to mention this control.
+  - Added dual decal material modes:
+    - non-debug: `MeshStandardMaterial` (decals fade in dark corridor with scene lighting)
+    - debug: `MeshBasicMaterial` (decals remain clearly visible while debugging)
+  - Added fallback plane decals for instanced/unsupported surfaces to keep prop impacts visible.
+  - Added pistol firing animation/FX:
+    - strong left-hand recoil kick with smooth return
+    - timed muzzle flash sprite + short-lived muzzle point light
+  - Added pistol state observability in `render_game_to_text`: `flags.pistolImpactDebug`, `flags.pistolRecoil`, `flags.pistolMuzzleFlash`, and `pistol.lastHit`.
+- Follow-up validation (SwiftShader Playwright run):
+  - Artifacts: `output/pistol-v3-validation/states.json`, `output/pistol-v3-validation/material-types.json`, `output/pistol-v3-validation/floor-hit.png`, `output/pistol-v3-validation/ceiling-hit.png`.
+  - Confirmed:
+    - floor hit: `type=floor`, `decalSpawned=true`
+    - ceiling hit: `type=ceiling`, `decalSpawned=true`
+    - prop debug shot: `type=prop`, `decalSpawned=true`
+    - decal cap holds at `10` after burst shots
+    - recoil + muzzle flash state spike on shot then decay (`pistolRecoil`, `pistolMuzzleFlash`)
+    - decal material switches by debug mode (`MeshBasicMaterial` debug on, `MeshStandardMaterial` debug off)
+  - No console/page error files were produced in this run.
+- Decal orientation/ceiling fix follow-up:
+  - Looked up the official three.js decals example (`examples/webgl_decals.html`) and matched its projection approach:
+    - orient a helper/projector with `lookAt(hitPoint + normal)` and use that rotation for `DecalGeometry`.
+  - Reworked bullet decal transform code in `src/game.js`:
+    - added `resolveBulletDecalSurfaceNormal(...)` (instance-aware world-space normal extraction for instanced props),
+    - added backface correction (`if dot(normal, shotDir) > 0 => flip`) so ceiling/backside hits project toward the visible side instead of clipping behind geometry,
+    - added `resolveBulletDecalTransformFromHit(...)` to centralize position/orientation and random roll for both `DecalGeometry` and fallback plane decals.
+  - Updated debug impact marker to use the same corrected world normal logic.
+  - Set both decal materials to `side: THREE.DoubleSide` to avoid winding-related ceiling visibility misses.
+- Validation after follow-up:
+  - Skill smoke reruns:
+    - `output/pistol-v4-smoke-client/shot-0.png`, `state-0.json`
+    - `output/pistol-v4b-smoke-client/shot-0.png`, `state-0.json`
+  - Focused validation:
+    - `output/pistol-v4-validation/states.json`, `material-types.json`
+    - `output/pistol-v4-validation/floor-hit.png`
+    - `output/pistol-v4-validation/ceiling-hit.png`
+    - `output/pistol-v4-validation/prop-hit.png`
+  - Confirmed in `states.json`:
+    - ceiling hits still classify correctly (`type=ceiling`) with `decalSpawned=true`,
+    - prop debug hits still classify (`type=prop`) with `decalSpawned=true`,
+    - no console/page error files emitted in this run.
+- Muzzle flash alignment + point-light shader-stall prevention:
+  - Reworked muzzle flash transform so sprite/light are positioned from the held pistol model muzzle each frame instead of a fixed rig offset:
+    - computes muzzle position from cached local bounds on the normalized pistol model,
+    - projects support point along current camera-forward direction in pistol local space,
+    - falls back to prior fixed local offset when pistol model is unavailable.
+  - Moved muzzle flash light to scene root and prewarmed it:
+    - `scene.add(pistolMuzzleFlashLight)` at startup,
+    - `visible=true` permanently,
+    - idle state uses `intensity=0` (no first-toggle shader compile stall).
+  - Muzzle flash sprite also moved to scene root and follows the same computed world muzzle position for alignment parity with the light.
+  - Added debug observability hooks:
+    - `window.__debugGetMuzzleFlashLightState()`
+    - `window.__debugGetMuzzleFlashSpriteWorldPosition()`
+- Validation for this follow-up:
+  - Skill smoke run: `output/pistol-v5-smoke-client/shot-0.png`, `state-0.json`.
+  - Focused muzzle checks: `output/pistol-v5-muzzle-check/states.json`, `muzzle-shot.png`.
+  - Confirmed from `states.json`:
+    - muzzle light is pre-added and remains `visible=true` with `intensity=0` at rest,
+    - sprite/light world positions are identical (`alignment=0`) for consistent muzzle alignment.
+  - No console/page error files were produced in this run.
+- Muzzle end flip follow-up:
+  - Flipped muzzle-direction solve to the opposite pistol end in `resolvePistolMuzzleWorldPosition()` (negated local muzzle direction once after converting camera-forward into model-local space).
+  - Validation:
+    - `output/pistol-v5b-muzzle-flip-check/state.json`
+    - `output/pistol-v5b-muzzle-flip-check/shot.png`
+  - Confirmed:
+    - flash moved to the opposite side of the pistol relative to previous solve,
+    - sprite/light still remain exactly aligned (`alignmentDist=0`),
+    - light prewarm behavior unchanged (`visible=true`, idle `intensity=0`).
+- Muzzle visibility robustness follow-up:
+  - Refined muzzle-point selection from box-corner support to end-face center on the dominant local axis, then nudged outward; avoids hidden/embedded flash points when using the flipped end.
+  - Added a small world-forward push (`PISTOL_MUZZLE_FORWARD_WORLD_OFFSET`) to keep the flash slightly in front of the muzzle plane.
+  - Improved low-FPS flash readability:
+    - increased `PISTOL_MUZZLE_FLASH_DURATION` from `0.06` to `0.11`,
+    - changed flash decay order to render current strength before decrementing remaining life (so the first rendered frame after a shot is not dimmed by delta subtraction).
+  - Validation:
+    - `output/pistol-v5e-muzzle-loaded/state.json`, `shot.png` (model-loaded path)
+    - `output/pistol-v5f-flash-visibility/state.json`, `shot.png`
+  - Confirmed:
+    - sprite/light remain aligned and co-located while firing,
+    - flash intensity/opacity now remain visible across multiple stepped frames (`16ms`, `66ms`) before settling to zero.
+- Replaced procedural muzzle flash texture with CC0 image asset:
+  - Downloaded OpenGameArt CC0 texture `muzzleFlash0_0.png` to:
+    - `assets/textures/light/muzzle-flash-sheet-cc0.png`
+  - Updated `src/game.js` to remove canvas-generated muzzle flash texture and load the CC0 file via `TextureLoader`.
+  - Configured the texture as a single-frame sprite from the 4-frame horizontal strip (`repeat.x = 0.25`, `offset.x = 0.25`) to preserve the existing flash behavior/style.
+  - Added attribution to `assets/textures/CREDITS.md`:
+    - Asset: Muzzle Flash Particle (OpenGameArt, creator `doug`, CC0 1.0)
+    - Source page + original direct file URL.
+  - Validation:
+    - Skill smoke run output: `output/muzzle-cc0-smoke-client/shot-0.png`, `output/muzzle-cc0-smoke-client/state-0.json`
+    - No `errors-*.json` emitted in this run.
+- Randomized muzzle flash frame selection per pistol shot:
+  - Added muzzle flash sheet constants (`frameCount=4`, `frameWidth=0.25`) and switched texture setup to derive repeat/offset from those constants.
+  - Added `randomizePistolMuzzleFlashFrame()` and call it inside `tryShootPistol()` right before flash lifetime starts, so each shot picks a random frame from the 4-frame strip.
+  - Added debug getter `window.__debugGetMuzzleFlashFrame()` for automation checks.
+  - Fixed a temporary init regression during implementation (`Cannot access 'PISTOL_MUZZLE_FLASH_FRAME_WIDTH' before initialization`) by moving frame constants above texture setup.
+  - Validation:
+    - Clean skill smoke run: `output/muzzle-random-frames-smoke-client-v2/shot-0.png`, `state-0.json` (no `errors-0.json` file).
+    - Focused randomization check: `output/muzzle-random-frame-validation/state.json`, `shot.png`.
+    - Confirmed random selection across all frames in a 20-shot burst:
+      - `uniqueFrames: [0, 1, 2, 3]`
+      - `uniqueCount: 4`
 
 ## TODO
 - Optional: add touch controls (virtual joystick/look) for mobile playability beyond layout compatibility.
@@ -136,3 +270,262 @@ Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedu
   - `/Users/natebreslow/Documents/analogHorrorAtHome/output/item-tuning-client/shot-0.png`
   - `/Users/natebreslow/Documents/analogHorrorAtHome/output/item-tuning-client/state-0.json`
   - No `errors-*.json` produced in this run.
+- Bat two-hands flashlight behavior update:
+  - Added `BASEBALL_BAT_ITEM_ID` and flashlight gating helpers in `src/game.js`:
+    - `isFlashlightSuppressedByTwoHandedBat()`
+    - `isFlashlightEmissionActive()`
+  - When bat is selected, first-person render now hides `flashlightModelAnchor`.
+  - Flashlight beam + bounce now use effective emission state (`flashlightEnabled && !batSelected`) so the light is off while holding the bat.
+  - Updated `toggleFlashlight()` messaging to indicate the flashlight is stowed while using the bat.
+  - Updated `render_game_to_text` flags:
+    - `flags.flashlightOn` now reports effective runtime emission state.
+    - Added `flags.flashlightSuppressedByTwoHandedBat`.
+- Validation artifacts:
+  - Skill smoke run: `output/bat-twohands-smoke/shot-0.png`, `output/bat-twohands-smoke/state-0.json` (client did not reliably enter maze from scripted click in this env, same known behavior as prior runs).
+  - Focused Playwright validation (with SwiftShader args):
+    - Screenshots:
+      - `output/bat-twohands-validation/after-grant.png`
+      - `output/bat-twohands-validation/after-select-bat.png`
+      - `output/bat-twohands-validation/after-back-to-knife.png`
+    - State trace: `output/bat-twohands-validation/states.json`
+    - Confirmed in-state transitions:
+      - Knife selected: `flashlightOn=true`, `flashlightSuppressedByTwoHandedBat=false`
+      - Bat selected: `flashlightOn=false`, `flashlightSuppressedByTwoHandedBat=true`
+      - Back to knife: `flashlightOn=true`, `flashlightSuppressedByTwoHandedBat=false`
+- Added player health system + mirrored radial HUD meter:
+  - New health HUD on the left side in `index.html` (`#health-wheel`) positioned symmetrically to inventory.
+  - Implemented circular outline progress fill using a conic-gradient ring (`#health-ring`) with center heart + numeric readout (`#health-value`).
+  - Added key hint copy updates to include `T` test damage.
+- Implemented health state and test-damage input in `src/game.js`:
+  - Added `PLAYER_MAX_HEALTH = 120`, `PLAYER_TEST_DAMAGE_PER_PRESS = 5`, and `playerHealth` state.
+  - Added health helpers: `clampPlayerHealth`, `setPlayerHealth`, `applyPlayerDamage`, and `updateHealthHud`.
+  - Bound `KeyT` to apply 5 damage and update status text.
+  - Health resets to full on maze regenerate.
+  - Added debug helpers:
+    - `window.__debugGetPlayerHealth()`
+    - `window.__debugSetPlayerHealth(value)`
+    - `window.__debugDamagePlayer(amount)`
+- Updated gameplay hint in `src/config.js` to mention `T` test damage.
+- Added health telemetry to `render_game_to_text`:
+  - `flags.playerDead`
+  - `health: { current, max, ratio, percent }`
+- Validation artifacts:
+  - Skill smoke run:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-smoke-client/shot-0.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-smoke-client/state-0.json`
+  - Focused health validation (Playwright + SwiftShader):
+    - Screenshots:
+      - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-validation/health-start.png`
+      - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-validation/health-after-1t.png`
+      - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-validation/health-after-3t.png`
+    - State trace:
+      - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-validation/states.json`
+      - confirmed `120 -> 115 -> 105` after 0/1/3 presses of `T`
+    - HUD CSS state:
+      - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-validation/hud-state.json`
+      - confirmed ring variable at `87.500` and text `105/120` after 3 presses.
+    - No console/page errors (`errors.json` not produced).
+- Health HUD visual upgrade pass:
+  - Increased health ring path thickness (from ~9px to ~14px) and strengthened track styling.
+  - Split health ring into layered fill + damage-trail arcs (`#health-ring-fill`, `#health-ring-loss`) so recent damage appears as a white radial segment.
+  - Added damage-trail animation state in `src/game.js`:
+    - `playerHealthDamageTrail`
+    - `playerHealthDamageTrailHoldRemaining`
+    - decay/hold constants (`HEALTH_DAMAGE_TRAIL_DECAY_PER_SECOND`, `HEALTH_DAMAGE_TRAIL_HOLD_SECONDS`)
+    - `updateHealthDamageTrail(deltaSeconds)` called from `update(...)`.
+  - Result: when health drops, the red bar updates immediately while the white segment shrinks over time toward the new health value.
+- Replaced center heart emoji with anatomical heart image + numeric health value:
+  - New image: `assets/textures/ui/anatomical-heart-cc0.png` (Openclipart, CC0 1.0).
+  - HUD center now displays heart image and just the current numeric health value.
+- Updated attribution:
+  - Added `Health HUD Heart Icon` section to `assets/textures/CREDITS.md` with asset page, creator, license, and source URL.
+- Validation artifacts:
+  - Skill smoke:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-ring-thick-smoke-client/shot-0.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-ring-thick-smoke-client/state-0.json`
+  - Focused ring animation validation:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-ring-animation-validation/health-start.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-ring-animation-validation/health-after-damage-early.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-ring-animation-validation/health-after-damage-late.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-ring-animation-validation/trace.json`
+  - Confirmed from trace:
+    - after damage: `health.current=115`, `health.trail=120`
+    - later: `health.current=115`, `health.trail=119.15` (white trail decreases toward the red health value)
+    - HUD CSS vars reflect this (`lossEnd` decreases from `100.000` to `99.292`).
+  - No runtime errors (`errors.json` not produced).
+- Additional deterministic animation check (using `window.advanceTime(1000)` in Playwright):
+  - immediate after `T`: `health.current=115`, `health.trail=120`
+  - after 1s simulated time: `health.current=115`, `health.trail=115`
+  - confirms white trail segment fully converges to current health over time in normal frame-stepped gameplay.
+- Heart asset swap requested by user:
+  - Replaced center icon with Wikimedia file `Red_heart_illustration.png` from:
+    - `https://commons.wikimedia.org/wiki/File:Red_heart_illustration.png`
+    - direct file: `https://upload.wikimedia.org/wikipedia/commons/9/90/Red_heart_illustration.png`
+  - Updated HUD center to remove numeric health readout (image-only center).
+  - Enlarged center container and icon so heart spans most of the inner circle.
+  - Updated `assets/textures/CREDITS.md` attribution for the new Wikimedia/RawPixel CC0 heart icon.
+- Validation artifacts for this swap:
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-heart-swap-validation/menu.png`
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-heart-swap-validation/game-after-damage.png`
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-heart-swap-validation/state.json`
+  - Confirmed in state: `hasValueNode=false`, `heartSrc=./assets/textures/ui/red-heart-illustration.png`, heart size `74x74` inside center `98x98`.
+- Heart transparency cleanup follow-up:
+  - Removed residual opaque speckle fragments from `assets/textures/ui/red-heart-illustration.png` by retaining only the primary connected foreground component.
+  - Result: true transparent background in the HUD (no visible square/white background around the heart in gameplay).
+- Heartbeat validation follow-up:
+  - Kept periodic heart beat implementation in `src/game.js` (`updateHealthHeartBeatVisual` + heartbeat constants).
+  - Verified frame-stepped beat scale changes via Playwright sampling:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-heartbeat-final-check/heartbeat-step-samples.json`
+    - Observed scale range: `min=1.0000`, `max=1.1799`.
+  - Verified final in-game visual:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-heartbeat-final-check/screen-final.png`
+- Health damage-trail decay model update:
+  - Switched white radial loss segment decay from linear to exponential in `src/game.js`.
+  - Replaced fixed per-second subtraction with multiplicative decay toward current health using:
+    - `HEALTH_DAMAGE_TRAIL_DECAY_RATE`
+    - `HEALTH_DAMAGE_TRAIL_MIN_DELTA` snap threshold.
+  - Hold phase remains unchanged (`HEALTH_DAMAGE_TRAIL_HOLD_SECONDS`), then trail eases down exponentially.
+- Validation for exponential decay:
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-exponential-decay-validation/trace.json`
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-exponential-decay-validation/game.png`
+  - Confirmed:
+    - post-hold trail drop deltas shrink over time (`1.106 -> 0.803 -> 0.583 -> ... -> 0.162`)
+    - `tailGetsSmaller=true`, `monotonicDropAfterHold=true`
+  - No runtime errors in this run (`errors.json` not produced).
+- Added jerky hold-to-consume interaction:
+  - New behavior in `src/game.js` for selected `meat_jerky_01`:
+    - hold left click for `2.0s` to consume,
+    - consume removes the jerky from inventory,
+    - player heals `+60` health (clamped by max health),
+    - releasing early cancels consume.
+  - Added center-screen consume HUD in `index.html`:
+    - `#consume-progress` + label + fill track,
+    - visible only while actively holding-to-eat.
+  - Left-click routing now prioritizes jerky consume start before pistol/melee logic.
+  - Added pointer-up/pointer-cancel/blur/unlock/regenerate cancellation paths so consume state cannot stick.
+  - Added debug state hook:
+    - `window.__debugGetJerkyConsumeState()`
+  - Added jerky consume telemetry to `render_game_to_text`:
+    - `flags.jerkyConsumeActive`, `flags.jerkyConsumeProgress`
+    - `selectedInventory.consumable` metadata when jerky is selected.
+- Updated help copy:
+  - `index.html` overlay controls now mention hold-left-click to eat jerky.
+  - `src/config.js` gameplay hint now includes jerky hold use.
+- Validation artifacts:
+  - Focused behavior validation:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/jerky-consume-validation/trace.json`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/jerky-consume-validation/during-hold.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/jerky-consume-validation/after-consume.png`
+  - Smoke run with skill client:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/jerky-smoke-client/shot-0.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/jerky-smoke-client/state-0.json`
+  - Confirmed in focused trace:
+    - At `1.0s` hold: health unchanged, progress HUD active (`50%`), jerky still present.
+    - After completion (`>2.0s`): health `+60`, jerky removed from inventory, consume HUD hidden, consume state inactive.
+  - No runtime errors in these runs (`errors.json` not produced).
+- Consume HUD visibility refinement:
+  - Removed fade transition dependency on `#consume-progress` opacity and added stronger panel styling so the center progress bar remains visible in deterministic frame-stepped runs.
+  - Validation rerun:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/jerky-consume-validation-v2/during-hold.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/jerky-consume-validation-v2/after-consume.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/jerky-consume-validation-v2/trace.json`
+  - Confirmed: mid-hold HUD opacity is `1`, label is present, fill is `50%`, and consume completion still heals/removes jerky.
+- Consumables expansion pass:
+  - Jerky use animation:
+    - While jerky is actively being eaten (hold left click), the held item now bobs up/down (plus subtle depth motion) via `updateConsumableUseVisuals()` in `src/game.js`.
+  - First aid kit use:
+    - Left click with `first_aid_kit_01` now consumes the kit and applies:
+      - immediate heal: `+120` (clamped to max),
+      - regeneration buff: `4 health/sec` for `30s`.
+  - Soda can use:
+    - Left click with `soda_can_01` now consumes the can and applies:
+      - speed buff: `+50%` movement speed (`x1.5`) for `30s`.
+  - Buff HUD:
+    - Added a top-right soda boost icon/timer badge in `index.html` (`#soda-boost-indicator`) that appears while soda boost is active.
+  - Input routing:
+    - Left click now routes as:
+      - jerky hold consume,
+      - instant consumables (first aid/soda),
+      - pistol fire,
+      - melee.
+  - Added debug/telemetry:
+    - `window.__debugGetConsumableEffects()`
+    - `window.__debugGetHeldItemAnchorOffset()`
+    - `render_game_to_text` now includes consumable effect flags and selected-consumable metadata.
+  - Updated control/help copy in:
+    - `index.html` overlay controls line,
+    - `src/config.js` gameplay hint.
+- Validation artifacts:
+  - Focused integration:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-v2-validation/trace.json`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-v2-validation/jerky-during.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-v2-validation/soda-active.png`
+  - Skill smoke run:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-smoke-client/shot-0.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-smoke-client/state-0.json`
+  - Confirmed checks in focused trace:
+    - jerky bobs while eating (`anchorYRange=0.064`),
+    - jerky consumes after hold and heals correctly,
+    - first aid consumes, immediately heals, and starts regen timer,
+    - regen heals at expected rate over stepped time,
+    - soda consumes, starts `x1.5` speed effect, shows top-right icon, and timer counts down.
+  - No runtime errors (`errors.json` not produced).
+- Added instant-consumable bob parity (first aid + soda):
+  - Implemented a short shared bob pulse timer (`instantConsumableBobRemaining`) so first aid kit and soda can now use the same bob animation style as jerky when activated.
+  - Triggered on `useFirstAidKit()` and `useSodaCan()` via `triggerInstantConsumableBob()`.
+  - `updateConsumableUseVisuals()` now applies bob when:
+    - jerky hold-consume is active, or
+    - instant consumable bob pulse is active.
+  - Added debug/telemetry fields:
+    - `window.__debugGetConsumableEffects().instantConsumableBobRemaining`
+    - `flags.instantConsumableBobSeconds` in `render_game_to_text`.
+- Validation for instant-consumable bob:
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-bob-validation/trace.json`
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-bob-validation/first-aid-bob.png`
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-bob-validation/soda-bob.png`
+  - Confirmed checks:
+    - `firstAidBobVisible=true`
+    - `sodaBobVisible=true`
+    - bob timer starts for both item uses.
+  - No runtime errors in this run (`errors.json` not produced).
+- Consumable timing + buff HUD refinement:
+  - Added top-right regen indicator/timer alongside soda indicator in `index.html` (`#regen-indicator`, `#regen-timer`).
+  - Reworked consumable use flow so jerky/first-aid/soda all use hold-to-consume:
+    - jerky: `2s`,
+    - first aid kit: `4s`,
+    - soda can: `1s`.
+  - Left-click now starts a timed consume for any selected consumable and uses the same center progress bar + label, canceling on release/unlock/blur.
+  - Slowed consume bob animation by reducing `JERKY_EAT_BOB_FREQUENCY` (`6.8 -> 3.6`), and applied this bob consistently while any consumable is being consumed.
+  - Added first-aid and soda consume durations to selected-consumable telemetry in `render_game_to_text`.
+  - Updated gameplay/control copy to reflect hold-to-consume behavior for all three consumables.
+- Validation for this refinement:
+  - Focused integration:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-v3-validation/trace.json`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-v3-validation/final.png`
+  - Skill smoke:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-v3-smoke-client/shot-0.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/consumables-v3-smoke-client/state-0.json`
+  - Confirmed checks:
+    - first aid not consumed at `2s`, consumed after `4s`,
+    - soda not consumed at `0.5s`, consumed after `1s`,
+    - regen indicator visible while regen active,
+    - soda indicator visible while boost active,
+    - jerky still consumes at `2s`.
+  - No runtime errors in these runs (`errors.json` not produced).
+- Inventory slot preservation fix:
+  - Changed item consumption/removal to clear slot entries (`null`) instead of compacting with `splice`, so using an item leaves a blank in-place slot.
+  - Updated inventory occupancy logic to count non-empty slots (instead of raw array length), and pickup now fills the first empty slot.
+  - Updated bullet consumption to clear bullet slots without shifting other items.
+  - Updated inventory serialization in `render_game_to_text` to skip empty slots safely.
+- Validation for slot preservation:
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/inventory-slot-preserve-validation/trace.json`
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/inventory-slot-preserve-validation/after-consume.png`
+  - Confirmed:
+    - selected jerky slot becomes empty after use (`selectedAfterIsBlank=true`)
+    - no auto-switch to another item
+    - HUD count decrements to `7/8`
+    - jerky removed from inventory payload.
+  - Smoke run:
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/inventory-slot-smoke-client/shot-0.png`
+    - `/Users/natebreslow/Documents/analogHorrorAtHome/output/inventory-slot-smoke-client/state-0.json`
+  - No runtime errors in these runs (`errors.json` not produced).

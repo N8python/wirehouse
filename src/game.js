@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DecalGeometry } from "three/addons/geometries/DecalGeometry.js";
 import Stats from "three/addons/libs/stats.module.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
@@ -62,6 +63,8 @@ import { createPickupSystem } from "./world/pickups.js";
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
+const PISTOL_MUZZLE_FLASH_FRAME_COUNT = 4;
+const PISTOL_MUZZLE_FLASH_FRAME_WIDTH = 1 / PISTOL_MUZZLE_FLASH_FRAME_COUNT;
 
 const app = document.querySelector("#app");
 const overlay = document.querySelector("#overlay");
@@ -71,6 +74,16 @@ const crosshair = document.querySelector("#crosshair");
 const inventoryRadial = document.querySelector("#inventory-radial");
 const inventoryCount = document.querySelector("#inventory-count");
 const interactionHint = document.querySelector("#interaction-hint");
+const healthRingFill = document.querySelector("#health-ring-fill");
+const healthRingLoss = document.querySelector("#health-ring-loss");
+const healthHeartImage = document.querySelector("#health-heart-image");
+const consumeProgress = document.querySelector("#consume-progress");
+const consumeProgressFill = document.querySelector("#consume-progress-fill");
+const consumeProgressLabel = document.querySelector("#consume-progress-label");
+const sodaBoostIndicator = document.querySelector("#soda-boost-indicator");
+const sodaBoostTimer = document.querySelector("#soda-boost-timer");
+const regenIndicator = document.querySelector("#regen-indicator");
+const regenTimer = document.querySelector("#regen-timer");
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x101117);
@@ -128,6 +141,56 @@ const { loadTextureSet, loadSpotlightMapTexture } = createTextureHelpers({
 const flashlightPatternTexture = loadSpotlightMapTexture(
   "./assets/textures/light/flashlight-pattern-incandescent.png",
 );
+const bulletDecalTexture = textureLoader.load(
+  "./assets/textures/decals/bullet-hole-impact-cc0.png",
+);
+bulletDecalTexture.colorSpace = THREE.SRGBColorSpace;
+bulletDecalTexture.wrapS = THREE.ClampToEdgeWrapping;
+bulletDecalTexture.wrapT = THREE.ClampToEdgeWrapping;
+const bulletDecalLitMaterial = new THREE.MeshStandardMaterial({
+  map: bulletDecalTexture,
+  color: 0xa3a3a3,
+  transparent: true,
+  alphaTest: 0.2,
+  depthWrite: false,
+  polygonOffset: true,
+  polygonOffsetFactor: -4,
+  side: THREE.DoubleSide,
+  roughness: 1,
+  metalness: 0,
+});
+const bulletDecalDebugMaterial = new THREE.MeshBasicMaterial({
+  map: bulletDecalTexture,
+  transparent: true,
+  alphaTest: 0.1,
+  depthWrite: false,
+  polygonOffset: true,
+  polygonOffsetFactor: -4,
+  side: THREE.DoubleSide,
+  color: 0xf8ece5,
+  opacity: 0.92,
+  toneMapped: false,
+});
+const muzzleFlashTexture = textureLoader.load(
+  "./assets/textures/light/muzzle-flash-sheet-cc0.png",
+);
+muzzleFlashTexture.colorSpace = THREE.SRGBColorSpace;
+muzzleFlashTexture.wrapS = THREE.ClampToEdgeWrapping;
+muzzleFlashTexture.wrapT = THREE.ClampToEdgeWrapping;
+// Use one frame from the 4-frame horizontal strip.
+muzzleFlashTexture.repeat.set(PISTOL_MUZZLE_FLASH_FRAME_WIDTH, 1);
+muzzleFlashTexture.offset.set(PISTOL_MUZZLE_FLASH_FRAME_WIDTH, 0);
+muzzleFlashTexture.needsUpdate = true;
+const pistolMuzzleFlashMaterial = new THREE.SpriteMaterial({
+  map: muzzleFlashTexture,
+  color: 0xffe2b0,
+  transparent: true,
+  opacity: 0,
+  depthWrite: false,
+  depthTest: true,
+  blending: THREE.AdditiveBlending,
+  toneMapped: false,
+});
 
 const controls = new PointerLockControls(camera, renderer.domElement);
 const clock = new THREE.Clock();
@@ -142,6 +205,47 @@ const PICKUP_INTERACT_DISTANCE = 1.9;
 const INVENTORY_MAX_ITEMS = 8;
 const INVENTORY_ROTATION_STEP_DEGREES = 360 / INVENTORY_MAX_ITEMS;
 const INVENTORY_SLOT_RADIUS_PX = 90;
+const PLAYER_MAX_HEALTH = 120;
+const PLAYER_TEST_DAMAGE_PER_PRESS = 5;
+const HEALTH_DAMAGE_TRAIL_DECAY_RATE = 3.2;
+const HEALTH_DAMAGE_TRAIL_MIN_DELTA = 0.01;
+const HEALTH_DAMAGE_TRAIL_HOLD_SECONDS = 0.12;
+const JERKY_ITEM_ID = "meat_jerky_01";
+const JERKY_HEAL_AMOUNT = 60;
+const JERKY_CONSUME_DURATION_SECONDS = 2;
+const JERKY_EAT_BOB_FREQUENCY = 3.6;
+const JERKY_EAT_BOB_AMPLITUDE = 0.05;
+const JERKY_EAT_BOB_DEPTH = 0.018;
+const FIRST_AID_KIT_ITEM_ID = "first_aid_kit_01";
+const FIRST_AID_KIT_HEAL_AMOUNT = 120;
+const FIRST_AID_USE_DURATION_SECONDS = 4;
+const FIRST_AID_REGEN_DURATION_SECONDS = 30;
+const FIRST_AID_REGEN_PER_SECOND = 4;
+const SODA_CAN_ITEM_ID = "soda_can_01";
+const SODA_SPEED_MULTIPLIER = 1.5;
+const SODA_USE_DURATION_SECONDS = 1;
+const SODA_SPEED_DURATION_SECONDS = 30;
+const HEALTH_HEARTBEAT_CYCLE_SECONDS = 1.45;
+const HEALTH_HEARTBEAT_PRIMARY_TIME = 0.09;
+const HEALTH_HEARTBEAT_SECONDARY_TIME = 0.24;
+const HEALTH_HEARTBEAT_PRIMARY_AMPLITUDE = 0.11;
+const HEALTH_HEARTBEAT_SECONDARY_AMPLITUDE = 0.18;
+const HEALTH_HEARTBEAT_WIDTH = 0.035;
+const PISTOL_ITEM_ID = "pistol_01";
+const BULLET_ITEM_ID = "bullet_01";
+const BASEBALL_BAT_ITEM_ID = "baseball_bat_01";
+const PISTOL_FIRE_RANGE = 72;
+const PISTOL_FIRE_COOLDOWN_SECONDS = 0.14;
+const BULLET_DECAL_SIZE = 0.52;
+const BULLET_DECAL_SIZE_VARIANCE = 0.1;
+const BULLET_DECAL_MAX_COUNT = 10;
+const PISTOL_RECOIL_RETURN_RATE = 17;
+const PISTOL_RECOIL_POSITION_KICK = new THREE.Vector3(-0.045, -0.06, 0.24);
+const PISTOL_RECOIL_ROTATION_KICK = new THREE.Vector3(-0.38, 0.1, 0.14);
+const PISTOL_MUZZLE_FLASH_FALLBACK_LOCAL_POSITION = new THREE.Vector3(0.52, 0.04, -0.23);
+const PISTOL_MUZZLE_FORWARD_WORLD_OFFSET = 0.09;
+const PISTOL_MUZZLE_FLASH_DURATION = 0.11;
+const PISTOL_PROP_DEBUG_MARKER_LIFETIME = 0.48;
 const MELEE_WEAPON_CONFIG = {
   "knife_01": {
     displayName: "Knife slash",
@@ -298,6 +402,32 @@ const heldItemBounds = new THREE.Box3();
 const heldItemCenter = new THREE.Vector3();
 const heldItemSize = new THREE.Vector3();
 const meleeAttackForward = new THREE.Vector3();
+const bulletDecalNormal = new THREE.Vector3();
+const bulletDecalPosition = new THREE.Vector3();
+const bulletDecalLookTarget = new THREE.Vector3();
+const bulletDecalSize = new THREE.Vector3();
+const bulletDecalRotation = new THREE.Euler();
+const bulletDecalProjector = new THREE.Object3D();
+const bulletDecalRayDirection = new THREE.Vector3();
+const bulletDecalNormalMatrix = new THREE.Matrix3();
+const bulletDecalInstanceMatrix = new THREE.Matrix4();
+const bulletDecalInstanceWorldMatrix = new THREE.Matrix4();
+const heldItemLocalBoundsScratch = new THREE.Box3();
+const pistolMuzzleWorldPosition = new THREE.Vector3();
+const pistolMuzzleFallbackWorldPosition = new THREE.Vector3();
+const pistolMuzzleDirectionWorld = new THREE.Vector3();
+const pistolMuzzleDirectionLocal = new THREE.Vector3();
+const pistolMuzzleSupportLocalPoint = new THREE.Vector3();
+const pistolMuzzleBoundsCenter = new THREE.Vector3();
+const pistolMuzzleBoundsSize = new THREE.Vector3();
+const pistolMuzzleModelWorldQuaternion = new THREE.Quaternion();
+const pistolShotDirection = new THREE.Vector3();
+const pistolHitDebugNormal = new THREE.Vector3();
+const pistolDebugHitPoint = new THREE.Vector3();
+const pistolNearestPropDirection = new THREE.Vector3();
+const pistolNearestPropWorld = new THREE.Vector3();
+const pistolPropBounds = new THREE.Box3();
+const pistolPropCenter = new THREE.Vector3();
 
 const flashlight = new THREE.SpotLight(
   0xdce8ff,
@@ -356,6 +486,25 @@ const topDownLookLine = new THREE.Line(
 );
 topDownLookLine.visible = false;
 topDownLookLine.renderOrder = 1002;
+const pistolMuzzleFlashSprite = new THREE.Sprite(pistolMuzzleFlashMaterial);
+pistolMuzzleFlashSprite.visible = false;
+pistolMuzzleFlashSprite.position.copy(PISTOL_MUZZLE_FLASH_FALLBACK_LOCAL_POSITION);
+pistolMuzzleFlashSprite.scale.setScalar(0.35);
+pistolMuzzleFlashSprite.renderOrder = 1003;
+const pistolMuzzleFlashLight = new THREE.PointLight(0xffbd84, 0, 4.4, 1.8);
+pistolMuzzleFlashLight.visible = true;
+pistolMuzzleFlashLight.position.copy(PISTOL_MUZZLE_FLASH_FALLBACK_LOCAL_POSITION);
+const pistolHitDebugMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.06, 10, 8),
+  new THREE.MeshBasicMaterial({
+    color: 0xffc354,
+    toneMapped: false,
+    depthTest: false,
+    depthWrite: false,
+  }),
+);
+pistolHitDebugMarker.visible = false;
+pistolHitDebugMarker.renderOrder = 1004;
 flashlight.map = flashlightPatternTexture;
 flashlight.shadow.camera.near = 0.01;
 flashlight.shadow.camera.far = FLASHLIGHT_BASE_DISTANCE;
@@ -366,6 +515,7 @@ flashlight.shadow.camera.updateProjectionMatrix();
 
 const flashlightRaycaster = new THREE.Raycaster();
 const meleeRaycaster = new THREE.Raycaster();
+const pistolRaycaster = new THREE.Raycaster();
 const flashlightBounceOrigin = new THREE.Vector3();
 const flashlightBounceDirection = new THREE.Vector3();
 const flashlightHitDirection = new THREE.Vector3();
@@ -424,8 +574,11 @@ inventoryLeftHandRig.add(inventoryLeftHandItemAnchor);
 scene.add(new THREE.HemisphereLight(0x5d6f8a, 0x1a1714, 0.22));
 scene.add(new THREE.AmbientLight(0x1d2430, 0.1));
 scene.add(heldItemAmbientFillLight);
+scene.add(pistolMuzzleFlashSprite);
+scene.add(pistolMuzzleFlashLight);
 scene.add(flashlightBounceLight);
 scene.add(bounceLightDebugMarker);
+scene.add(pistolHitDebugMarker);
 scene.add(topDownPlayerMarker);
 scene.add(topDownLookLine);
 const topDownFillLight = new THREE.AmbientLight(0xe4edf9, 0.92);
@@ -581,11 +734,29 @@ let inventoryWheelRotationSteps = 0;
 let heldInventoryItemId = null;
 let heldInventoryLoadToken = 0;
 let inventorySelectionOutline = null;
+let playerHealth = PLAYER_MAX_HEALTH;
+let playerHealthDamageTrail = PLAYER_MAX_HEALTH;
+let playerHealthDamageTrailHoldRemaining = 0;
 let meleeCooldownRemaining = 0;
 let meleeSwingElapsed = 0;
 let meleeSwingDuration = 0;
 let meleeSwingActive = false;
 let meleeSwingWeaponId = null;
+let pistolInfiniteAmmo = false;
+let pistolFireCooldownRemaining = 0;
+let pistolRecoilAmount = 0;
+let pistolMuzzleFlashRemaining = 0;
+let pistolImpactDebugEnabled = false;
+let pistolPropDebugMarkerRemaining = 0;
+let lastPistolHitInfo = null;
+let jerkyConsumeActive = false;
+let jerkyConsumeElapsed = 0;
+let consumableUseItemId = null;
+let consumableUseDuration = 0;
+let consumableUseLabel = "";
+let firstAidRegenRemaining = 0;
+let sodaSpeedBoostRemaining = 0;
+const bulletDecals = [];
 const heldItemTuningUi = {
   panel: null,
   selectedLabel: null,
@@ -634,7 +805,10 @@ if (ENABLE_HELD_ITEM_TUNING_UI) {
   initHeldItemTuningPanel();
 }
 updateInventoryHud();
+updateHealthHud();
 updatePickupPrompt();
+updateJerkyConsumeHud();
+updateBuffHud();
 render();
 renderer.setAnimationLoop(animationFrame);
 
@@ -709,11 +883,30 @@ function regenerateMaze() {
   camera.position.y = PLAYER_HEIGHT;
   flashlightRig.position.copy(FLASHLIGHT_RIG_BASE_POSITION);
   flashlightRig.rotation.copy(FLASHLIGHT_RIG_BASE_ROTATION);
+  setPlayerHealth(PLAYER_MAX_HEALTH);
   meleeCooldownRemaining = 0;
   meleeSwingElapsed = 0;
   meleeSwingDuration = 0;
   meleeSwingActive = false;
   meleeSwingWeaponId = null;
+  pistolInfiniteAmmo = false;
+  pistolFireCooldownRemaining = 0;
+  pistolRecoilAmount = 0;
+  pistolMuzzleFlashRemaining = 0;
+  pistolImpactDebugEnabled = false;
+  pistolPropDebugMarkerRemaining = 0;
+  lastPistolHitInfo = null;
+  pistolHitDebugMarker.visible = false;
+  pistolMuzzleFlashSprite.visible = false;
+  pistolMuzzleFlashLight.visible = true;
+  pistolMuzzleFlashLight.intensity = 0;
+  pistolMuzzleFlashMaterial.opacity = 0;
+  cancelJerkyConsume();
+  firstAidRegenRemaining = 0;
+  sodaSpeedBoostRemaining = 0;
+  updateBuffHud();
+  syncBulletDecalMaterials();
+  clearBulletDecals();
   inventory.length = 0;
   setInventoryWheelRotationSteps(0);
   updateInventoryHud();
@@ -817,6 +1010,8 @@ function setupInteractions() {
     }
   });
   renderer.domElement.addEventListener("pointerdown", onPointerDown);
+  renderer.domElement.addEventListener("pointerup", onPointerUp);
+  renderer.domElement.addEventListener("pointercancel", onPointerUp);
 
   controls.addEventListener("lock", () => {
     isTopDownView = false;
@@ -828,6 +1023,7 @@ function setupInteractions() {
   });
 
   controls.addEventListener("unlock", () => {
+    cancelJerkyConsume();
     if (suppressUnlockPause) {
       suppressUnlockPause = false;
       return;
@@ -849,6 +1045,7 @@ function setupInteractions() {
 
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", () => cancelJerkyConsume());
   window.addEventListener("resize", resizeRenderer);
   document.addEventListener("fullscreenchange", resizeRenderer);
 
@@ -865,11 +1062,98 @@ function setupInteractions() {
   window.__debugGrantInventory = grantDebugInventory;
   window.__debugRotateInventory = rotateInventoryWheel;
   window.__debugGetSelectedInventoryId = () => getSelectedInventoryItem()?.id || null;
+  window.__debugSetPistolInfiniteAmmo = (enabled) => {
+    pistolInfiniteAmmo = Boolean(enabled);
+    return pistolInfiniteAmmo;
+  };
+  window.__debugGetPistolInfiniteAmmo = () => pistolInfiniteAmmo;
+  window.__debugGetBulletAmmoCount = getBulletAmmoCount;
+  window.__debugGetBulletDecalCount = () => bulletDecals.length;
+  window.__debugGetBulletDecalMaterialType = () => bulletDecals[0]?.material?.type || null;
+  window.__debugSetPistolImpactDebug = (enabled) => {
+    setPistolImpactDebugEnabled(Boolean(enabled));
+    return pistolImpactDebugEnabled;
+  };
+  window.__debugGetPistolImpactDebug = () => pistolImpactDebugEnabled;
+  window.__debugGetLastPistolHit = () =>
+    lastPistolHitInfo
+      ? {
+          ...lastPistolHitInfo,
+        }
+      : null;
+  window.__debugShootPistolDirection = (x, y, z, bypassCooldown = true) => {
+    const nx = Number(x);
+    const ny = Number(y);
+    const nz = Number(z);
+    if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) {
+      return false;
+    }
+    return tryShootPistol({
+      direction: new THREE.Vector3(nx, ny, nz),
+      bypassCooldown: Boolean(bypassCooldown),
+    });
+  };
+  window.__debugShootPistolAtNearestProp = () => tryShootPistolAtNearestProp();
+  window.__debugGetMuzzleFlashLightState = () => ({
+    visible: pistolMuzzleFlashLight.visible,
+    intensity: round(pistolMuzzleFlashLight.intensity),
+    distance: round(pistolMuzzleFlashLight.distance),
+    x: round(pistolMuzzleFlashLight.position.x),
+    y: round(pistolMuzzleFlashLight.position.y),
+    z: round(pistolMuzzleFlashLight.position.z),
+  });
+  window.__debugGetMuzzleFlashSpriteWorldPosition = () => ({
+    visible: pistolMuzzleFlashSprite.visible,
+    opacity: round(pistolMuzzleFlashMaterial.opacity),
+    x: round(pistolMuzzleFlashSprite.position.x),
+    y: round(pistolMuzzleFlashSprite.position.y),
+    z: round(pistolMuzzleFlashSprite.position.z),
+  });
+  window.__debugGetMuzzleFlashFrame = () =>
+    Math.round(muzzleFlashTexture.offset.x / PISTOL_MUZZLE_FLASH_FRAME_WIDTH);
+  window.__debugGetPlayerHealth = () => ({
+    current: round(playerHealth),
+    trail: round(playerHealthDamageTrail),
+    max: PLAYER_MAX_HEALTH,
+    ratio: round(playerHealth / PLAYER_MAX_HEALTH),
+    trailRatio: round(playerHealthDamageTrail / PLAYER_MAX_HEALTH),
+  });
+  window.__debugSetPlayerHealth = (value) => {
+    setPlayerHealth(Number(value));
+    return playerHealth;
+  };
+  window.__debugDamagePlayer = (amount = PLAYER_TEST_DAMAGE_PER_PRESS) => {
+    applyPlayerDamage(Number(amount), "debug");
+    return playerHealth;
+  };
+  window.__debugGetJerkyConsumeState = () => {
+    const jerkyActive = jerkyConsumeActive && consumableUseItemId === JERKY_ITEM_ID;
+    return {
+      active: jerkyActive,
+      elapsed: round(jerkyActive ? jerkyConsumeElapsed : 0),
+      progress: round(getJerkyConsumeProgress()),
+      itemId: consumableUseItemId,
+    };
+  };
+  window.__debugGetConsumableEffects = () => ({
+    sodaSpeedBoostRemaining: round(sodaSpeedBoostRemaining),
+    firstAidRegenRemaining: round(firstAidRegenRemaining),
+    speedMultiplier: round(getPlayerSpeedMultiplier()),
+    consumableUseRemaining: round(
+      jerkyConsumeActive ? Math.max(0, consumableUseDuration - jerkyConsumeElapsed) : 0,
+    ),
+  });
+  window.__debugGetHeldItemAnchorOffset = () => ({
+    x: round(inventoryLeftHandItemAnchor.position.x),
+    y: round(inventoryLeftHandItemAnchor.position.y),
+    z: round(inventoryLeftHandItemAnchor.position.z),
+  });
 }
 
 function activateGameplay() {
   gameActive = true;
   isTopDownView = false;
+  cancelJerkyConsume();
   overlay.classList.add("hidden");
   crosshair.style.opacity = "1";
   setStatus(GAMEPLAY_HINT);
@@ -933,6 +1217,12 @@ function onKeyDown(event) {
   if (code === "KeyB") {
     toggleBounceLightDebugMarker();
   }
+  if (code === "KeyP") {
+    togglePistolImpactDebug();
+  }
+  if (code === "KeyT") {
+    applyPlayerDamage(PLAYER_TEST_DAMAGE_PER_PRESS, "debug");
+  }
 }
 
 function onKeyUp(event) {
@@ -954,11 +1244,29 @@ function onPointerDown(event) {
   if (canUsePointerLock && !controls.isLocked) {
     return;
   }
+  if (tryStartJerkyConsume()) {
+    return;
+  }
+  if (tryShootPistol()) {
+    return;
+  }
   tryMeleeAttack();
+}
+
+function onPointerUp(event) {
+  if (event.type !== "pointercancel" && event.button !== 0) {
+    return;
+  }
+  cancelJerkyConsume(getActiveConsumableCancelStatus());
 }
 
 function update(deltaSeconds) {
   elapsed += deltaSeconds;
+  pistolFireCooldownRemaining = Math.max(0, pistolFireCooldownRemaining - deltaSeconds);
+  updateConsumableEffects(deltaSeconds);
+  updateHealthHeartBeatVisual();
+  updateHealthDamageTrail(deltaSeconds);
+  updateJerkyConsume(deltaSeconds);
   updateFlashlightFlicker(deltaSeconds);
   updateFlashlightBounceLight(deltaSeconds);
   pickupSystem.update(deltaSeconds);
@@ -970,6 +1278,9 @@ function update(deltaSeconds) {
   updatePlayerMovement(deltaSeconds);
   updateViewBobbing(deltaSeconds);
   updateMeleeAttack(deltaSeconds);
+  updateConsumableUseVisuals();
+  updatePistolVisualEffects(deltaSeconds);
+  updatePistolPropDebugMarker(deltaSeconds);
   updatePickupPrompt();
 }
 
@@ -1001,7 +1312,10 @@ function updatePlayerMovement(deltaSeconds) {
     move.normalize();
   }
 
-  const speed = PLAYER_SPEED * (keyState.sprint ? SPRINT_MULTIPLIER : 1);
+  const speed =
+    PLAYER_SPEED *
+    (keyState.sprint ? SPRINT_MULTIPLIER : 1) *
+    getPlayerSpeedMultiplier();
   const stepX = move.x * speed * deltaSeconds;
   const stepZ = move.z * speed * deltaSeconds;
   const current = camera.position;
@@ -1217,6 +1531,7 @@ function animationFrame(timeMs = performance.now()) {
 }
 
 function render() {
+  const flashlightModelVisibleInFirstPerson = !isFlashlightSuppressedByTwoHandedBat();
   if (isTopDownView) {
     if (roofMesh) {
       roofMesh.visible = false;
@@ -1240,7 +1555,7 @@ function render() {
     scene.fog = mazeFog;
     return;
   }
-  flashlightModelAnchor.visible = true;
+  flashlightModelAnchor.visible = flashlightModelVisibleInFirstPerson;
   inventoryLeftHandRig.visible = true;
   topDownFillLight.intensity = 0;
   topDownPlayerMarker.visible = false;
@@ -1250,7 +1565,7 @@ function render() {
 }
 
 function updateFlashlightFlicker(deltaSeconds) {
-  if (!flashlightEnabled || isTopDownView) {
+  if (!isFlashlightEmissionActive() || isTopDownView) {
     flashlight.intensity = 0;
     flashlight.distance = FLASHLIGHT_BASE_DISTANCE;
     flashlightFlickerTarget = 1;
@@ -1342,7 +1657,7 @@ function updateFlashlightBounceEma(targetColor, targetIntensity, targetPosition,
 }
 
 function updateFlashlightBounceLight(deltaSeconds) {
-  if (!flashlightEnabled || isTopDownView || hasWon) {
+  if (!isFlashlightEmissionActive() || isTopDownView || hasWon) {
     bounceLightDebugHasHit = false;
     hideFlashlightBounceLight();
     flashlightBounceEmaInitialized = false;
@@ -1476,6 +1791,371 @@ function setStatus(text) {
   status.textContent = text;
 }
 
+function clampPlayerHealth(value) {
+  if (!Number.isFinite(value)) {
+    return playerHealth;
+  }
+  return Math.max(0, Math.min(PLAYER_MAX_HEALTH, value));
+}
+
+function updateHealthHud() {
+  const healthRatio = PLAYER_MAX_HEALTH > 0 ? playerHealth / PLAYER_MAX_HEALTH : 0;
+  const healthPercent = Math.max(0, Math.min(100, healthRatio * 100));
+  const healthTrailRatio =
+    PLAYER_MAX_HEALTH > 0 ? playerHealthDamageTrail / PLAYER_MAX_HEALTH : 0;
+  const healthTrailPercent = Math.max(
+    healthPercent,
+    Math.max(0, Math.min(100, healthTrailRatio * 100)),
+  );
+
+  if (healthRingFill) {
+    healthRingFill.style.setProperty("--health-progress", healthPercent.toFixed(3));
+  }
+  if (healthRingLoss) {
+    healthRingLoss.style.setProperty("--health-progress", healthPercent.toFixed(3));
+    healthRingLoss.style.setProperty("--health-loss-progress", healthTrailPercent.toFixed(3));
+  }
+}
+
+function setPlayerHealth(nextHealth) {
+  const previousHealth = playerHealth;
+  const clampedHealth = clampPlayerHealth(nextHealth);
+  if (clampedHealth < previousHealth) {
+    playerHealthDamageTrail = Math.max(playerHealthDamageTrail, previousHealth);
+    playerHealthDamageTrailHoldRemaining = HEALTH_DAMAGE_TRAIL_HOLD_SECONDS;
+  } else if (clampedHealth >= previousHealth) {
+    playerHealthDamageTrail = clampedHealth;
+    playerHealthDamageTrailHoldRemaining = 0;
+  }
+  playerHealth = clampedHealth;
+  updateHealthHud();
+}
+
+function updateHealthDamageTrail(deltaSeconds) {
+  if (playerHealthDamageTrail <= playerHealth) {
+    playerHealthDamageTrail = playerHealth;
+    return;
+  }
+  if (playerHealthDamageTrailHoldRemaining > 0) {
+    playerHealthDamageTrailHoldRemaining = Math.max(
+      0,
+      playerHealthDamageTrailHoldRemaining - deltaSeconds,
+    );
+    return;
+  }
+  const clampedDeltaSeconds = Math.max(0, deltaSeconds);
+  const trailDelta = playerHealthDamageTrail - playerHealth;
+  const decayFactor = Math.exp(-HEALTH_DAMAGE_TRAIL_DECAY_RATE * clampedDeltaSeconds);
+  const nextTrail = playerHealth + trailDelta * decayFactor;
+  playerHealthDamageTrail =
+    nextTrail - playerHealth <= HEALTH_DAMAGE_TRAIL_MIN_DELTA ? playerHealth : nextTrail;
+  updateHealthHud();
+}
+
+function getActiveConsumableUseProgress() {
+  if (!jerkyConsumeActive || consumableUseDuration <= 0) {
+    return 0;
+  }
+  return THREE.MathUtils.clamp(jerkyConsumeElapsed / consumableUseDuration, 0, 1);
+}
+
+function getJerkyConsumeProgress() {
+  if (!jerkyConsumeActive || consumableUseItemId !== JERKY_ITEM_ID) {
+    return 0;
+  }
+  return getActiveConsumableUseProgress();
+}
+
+function updateJerkyConsumeHud() {
+  const progress = getActiveConsumableUseProgress();
+  if (consumeProgress) {
+    consumeProgress.classList.toggle("active", jerkyConsumeActive);
+  }
+  if (consumeProgressFill) {
+    consumeProgressFill.style.width = `${(progress * 100).toFixed(2)}%`;
+  }
+  if (consumeProgressLabel) {
+    consumeProgressLabel.textContent = jerkyConsumeActive ? consumableUseLabel : "";
+  }
+}
+
+function removeInventoryItemById(itemId) {
+  const selectedSlotIndex = getSelectedInventorySlotIndex();
+  if (
+    selectedSlotIndex >= 0 &&
+    selectedSlotIndex < INVENTORY_MAX_ITEMS &&
+    inventory[selectedSlotIndex]?.id === itemId
+  ) {
+    inventory[selectedSlotIndex] = null;
+    return true;
+  }
+  for (let i = INVENTORY_MAX_ITEMS - 1; i >= 0; i -= 1) {
+    if (inventory[i]?.id !== itemId) {
+      continue;
+    }
+    inventory[i] = null;
+    return true;
+  }
+  return false;
+}
+
+function getPlayerSpeedMultiplier() {
+  return sodaSpeedBoostRemaining > 0 ? SODA_SPEED_MULTIPLIER : 1;
+}
+
+function updateTimedBuffIndicator(indicator, timerNode, active, remainingSeconds) {
+  if (!indicator) {
+    return;
+  }
+  indicator.classList.toggle("active", active);
+  if (!timerNode) {
+    return;
+  }
+  timerNode.textContent = active ? `${Math.ceil(remainingSeconds)}s` : "";
+}
+
+function updateBuffHud() {
+  updateTimedBuffIndicator(
+    sodaBoostIndicator,
+    sodaBoostTimer,
+    sodaSpeedBoostRemaining > 0,
+    sodaSpeedBoostRemaining,
+  );
+  updateTimedBuffIndicator(
+    regenIndicator,
+    regenTimer,
+    firstAidRegenRemaining > 0,
+    firstAidRegenRemaining,
+  );
+}
+
+function useFirstAidKit() {
+  if (!removeInventoryItemById(FIRST_AID_KIT_ITEM_ID)) {
+    setStatus("First aid kit unavailable.");
+    return false;
+  }
+  const previousHealth = playerHealth;
+  setPlayerHealth(playerHealth + FIRST_AID_KIT_HEAL_AMOUNT);
+  firstAidRegenRemaining = FIRST_AID_REGEN_DURATION_SECONDS;
+  const healedAmount = Math.max(0, Math.round(playerHealth - previousHealth));
+  updateInventoryHud();
+  updatePickupPrompt();
+  setStatus(
+    `Used first aid kit. +${healedAmount} health. Regen active (${FIRST_AID_REGEN_PER_SECOND}/s for ${FIRST_AID_REGEN_DURATION_SECONDS}s).`,
+  );
+  return true;
+}
+
+function useSodaCan() {
+  if (!removeInventoryItemById(SODA_CAN_ITEM_ID)) {
+    setStatus("Soda can unavailable.");
+    return false;
+  }
+  sodaSpeedBoostRemaining = SODA_SPEED_DURATION_SECONDS;
+  updateInventoryHud();
+  updatePickupPrompt();
+  updateBuffHud();
+  setStatus(
+    `Drank soda. Speed boost active (+50% for ${SODA_SPEED_DURATION_SECONDS}s).`,
+  );
+  return true;
+}
+
+function consumeJerkyAndHeal() {
+  if (!removeInventoryItemById(JERKY_ITEM_ID)) {
+    setStatus("Jerky use canceled (item missing).");
+    updateInventoryHud();
+    updatePickupPrompt();
+    return false;
+  }
+
+  const previousHealth = playerHealth;
+  setPlayerHealth(playerHealth + JERKY_HEAL_AMOUNT);
+  const healedAmount = Math.max(0, Math.round(playerHealth - previousHealth));
+  updateInventoryHud();
+  updatePickupPrompt();
+  setStatus(`Ate jerky. +${healedAmount} health.`);
+  return true;
+}
+
+function getConsumableUseConfig(itemId) {
+  if (itemId === JERKY_ITEM_ID) {
+    return {
+      itemId,
+      durationSeconds: JERKY_CONSUME_DURATION_SECONDS,
+      label: "Eating jerky...",
+      cancelStatus: "Jerky use canceled.",
+      onComplete: consumeJerkyAndHeal,
+    };
+  }
+  if (itemId === FIRST_AID_KIT_ITEM_ID) {
+    return {
+      itemId,
+      durationSeconds: FIRST_AID_USE_DURATION_SECONDS,
+      label: "Using first aid kit...",
+      cancelStatus: "First aid use canceled.",
+      onComplete: useFirstAidKit,
+    };
+  }
+  if (itemId === SODA_CAN_ITEM_ID) {
+    return {
+      itemId,
+      durationSeconds: SODA_USE_DURATION_SECONDS,
+      label: "Drinking soda...",
+      cancelStatus: "Soda use canceled.",
+      onComplete: useSodaCan,
+    };
+  }
+  return null;
+}
+
+function getActiveConsumableCancelStatus() {
+  const config = getConsumableUseConfig(consumableUseItemId);
+  return config?.cancelStatus || "Consumable use canceled.";
+}
+
+function cancelJerkyConsume(statusText = null) {
+  if (!jerkyConsumeActive && jerkyConsumeElapsed <= 0 && !consumableUseItemId) {
+    return;
+  }
+  jerkyConsumeActive = false;
+  jerkyConsumeElapsed = 0;
+  consumableUseItemId = null;
+  consumableUseDuration = 0;
+  consumableUseLabel = "";
+  updateJerkyConsumeHud();
+  if (statusText) {
+    setStatus(statusText);
+  }
+}
+
+function tryStartJerkyConsume() {
+  const selectedItem = getSelectedInventoryItem();
+  const config = getConsumableUseConfig(selectedItem?.id);
+  if (!config) {
+    return false;
+  }
+  if (jerkyConsumeActive) {
+    return consumableUseItemId === config.itemId;
+  }
+  jerkyConsumeActive = true;
+  jerkyConsumeElapsed = 0;
+  consumableUseItemId = config.itemId;
+  consumableUseDuration = config.durationSeconds;
+  consumableUseLabel = config.label;
+  updateJerkyConsumeHud();
+  setStatus(`${config.label} Keep holding left click.`);
+  return true;
+}
+
+function updateJerkyConsume(deltaSeconds) {
+  if (!jerkyConsumeActive) {
+    return;
+  }
+
+  if (
+    !gameActive ||
+    hasWon ||
+    isTopDownView ||
+    (canUsePointerLock && !controls.isLocked) ||
+    getSelectedInventoryItem()?.id !== consumableUseItemId
+  ) {
+    cancelJerkyConsume();
+    return;
+  }
+
+  const config = getConsumableUseConfig(consumableUseItemId);
+  if (!config) {
+    cancelJerkyConsume();
+    return;
+  }
+
+  jerkyConsumeElapsed += Math.max(0, deltaSeconds);
+  if (jerkyConsumeElapsed >= consumableUseDuration) {
+    jerkyConsumeActive = false;
+    jerkyConsumeElapsed = consumableUseDuration;
+    updateJerkyConsumeHud();
+    consumableUseItemId = null;
+    consumableUseDuration = 0;
+    consumableUseLabel = "";
+    config.onComplete();
+    jerkyConsumeElapsed = 0;
+    updateJerkyConsumeHud();
+    return;
+  }
+
+  updateJerkyConsumeHud();
+}
+
+function updateConsumableEffects(deltaSeconds) {
+  if (gameActive && !hasWon) {
+    if (sodaSpeedBoostRemaining > 0) {
+      sodaSpeedBoostRemaining = Math.max(0, sodaSpeedBoostRemaining - deltaSeconds);
+    }
+    if (firstAidRegenRemaining > 0) {
+      firstAidRegenRemaining = Math.max(0, firstAidRegenRemaining - deltaSeconds);
+      if (playerHealth < PLAYER_MAX_HEALTH) {
+        setPlayerHealth(playerHealth + FIRST_AID_REGEN_PER_SECOND * deltaSeconds);
+      }
+    }
+  }
+  updateBuffHud();
+}
+
+function updateConsumableUseVisuals() {
+  if (jerkyConsumeActive && getSelectedInventoryItem()?.id === consumableUseItemId) {
+    const phase = elapsed * JERKY_EAT_BOB_FREQUENCY * TWO_PI;
+    inventoryLeftHandItemAnchor.position.y = Math.sin(phase) * JERKY_EAT_BOB_AMPLITUDE;
+    inventoryLeftHandItemAnchor.position.z = Math.sin(phase * 0.5) * JERKY_EAT_BOB_DEPTH;
+    return;
+  }
+  inventoryLeftHandItemAnchor.position.set(0, 0, 0);
+}
+
+function evaluateHeartbeatPulse(phase, pulseCenter, amplitude) {
+  const distance = phase - pulseCenter;
+  const sigma = HEALTH_HEARTBEAT_WIDTH;
+  const gaussian = Math.exp(-(distance * distance) / (2 * sigma * sigma));
+  return amplitude * gaussian;
+}
+
+function updateHealthHeartBeatVisual() {
+  if (!healthHeartImage) {
+    return;
+  }
+  const phase = (elapsed % HEALTH_HEARTBEAT_CYCLE_SECONDS) / HEALTH_HEARTBEAT_CYCLE_SECONDS;
+  const beatScale =
+    1 +
+    evaluateHeartbeatPulse(
+      phase,
+      HEALTH_HEARTBEAT_PRIMARY_TIME,
+      HEALTH_HEARTBEAT_PRIMARY_AMPLITUDE,
+    ) +
+    evaluateHeartbeatPulse(
+      phase,
+      HEALTH_HEARTBEAT_SECONDARY_TIME,
+      HEALTH_HEARTBEAT_SECONDARY_AMPLITUDE,
+    );
+  healthHeartImage.style.transform = `scale(${beatScale.toFixed(4)})`;
+}
+
+function applyPlayerDamage(amount, sourceLabel = "damage") {
+  const damageAmount = Number(amount);
+  if (!Number.isFinite(damageAmount) || damageAmount <= 0) {
+    return;
+  }
+  const previousHealth = playerHealth;
+  setPlayerHealth(playerHealth - damageAmount);
+  const appliedDamage = Math.max(0, previousHealth - playerHealth);
+  if (appliedDamage <= 0) {
+    setStatus("Health is already at minimum.");
+    return;
+  }
+  setStatus(
+    `Health -${Math.round(appliedDamage)} (${sourceLabel}). ${Math.round(playerHealth)}/${PLAYER_MAX_HEALTH}`,
+  );
+}
+
 function normalizeInventorySlotIndex(index) {
   return ((index % INVENTORY_MAX_ITEMS) + INVENTORY_MAX_ITEMS) % INVENTORY_MAX_ITEMS;
 }
@@ -1486,6 +2166,563 @@ function getSelectedInventorySlotIndex() {
 
 function getSelectedInventoryItem() {
   return inventory[getSelectedInventorySlotIndex()] || null;
+}
+
+function getInventoryOccupiedCount() {
+  let count = 0;
+  for (let i = 0; i < INVENTORY_MAX_ITEMS; i += 1) {
+    if (inventory[i]) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function findFirstEmptyInventorySlotIndex() {
+  for (let i = 0; i < INVENTORY_MAX_ITEMS; i += 1) {
+    if (!inventory[i]) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function isFlashlightSuppressedByTwoHandedBat() {
+  return getSelectedInventoryItem()?.id === BASEBALL_BAT_ITEM_ID;
+}
+
+function isFlashlightEmissionActive() {
+  return flashlightEnabled && !isFlashlightSuppressedByTwoHandedBat();
+}
+
+function clearBulletDecals() {
+  while (bulletDecals.length > 0) {
+    const decal = bulletDecals.pop();
+    if (!decal) {
+      continue;
+    }
+    scene.remove(decal);
+    decal.geometry?.dispose?.();
+  }
+}
+
+function syncBulletDecalMaterials() {
+  const nextMaterial = pistolImpactDebugEnabled ? bulletDecalDebugMaterial : bulletDecalLitMaterial;
+  for (const decal of bulletDecals) {
+    decal.material = nextMaterial;
+  }
+}
+
+function setPistolImpactDebugEnabled(enabled) {
+  pistolImpactDebugEnabled = Boolean(enabled);
+  syncBulletDecalMaterials();
+  if (!pistolImpactDebugEnabled) {
+    pistolHitDebugMarker.visible = false;
+    pistolPropDebugMarkerRemaining = 0;
+  }
+}
+
+function togglePistolImpactDebug() {
+  setPistolImpactDebugEnabled(!pistolImpactDebugEnabled);
+  setStatus(
+    pistolImpactDebugEnabled
+      ? "Pistol impact debug on. Decals/emphasis visible and prop hits are reported."
+      : "Pistol impact debug off. Decals use dark-lit material.",
+  );
+}
+
+function updatePistolPropDebugMarker(deltaSeconds) {
+  if (!pistolImpactDebugEnabled) {
+    pistolHitDebugMarker.visible = false;
+    pistolPropDebugMarkerRemaining = 0;
+    return;
+  }
+
+  if (pistolPropDebugMarkerRemaining <= 0) {
+    pistolHitDebugMarker.visible = false;
+    return;
+  }
+
+  pistolPropDebugMarkerRemaining = Math.max(0, pistolPropDebugMarkerRemaining - deltaSeconds);
+  const t = THREE.MathUtils.clamp(
+    pistolPropDebugMarkerRemaining / PISTOL_PROP_DEBUG_MARKER_LIFETIME,
+    0,
+    1,
+  );
+  const pulse = 1 + Math.sin(elapsed * 35) * 0.12;
+  const scale = (0.8 + t * 0.45) * pulse;
+  pistolHitDebugMarker.scale.set(scale, scale, scale);
+  pistolHitDebugMarker.visible = pistolPropDebugMarkerRemaining > 0;
+}
+
+function resolvePistolMuzzleWorldPosition() {
+  const fallback = () => {
+    pistolMuzzleFallbackWorldPosition.copy(PISTOL_MUZZLE_FLASH_FALLBACK_LOCAL_POSITION);
+    inventoryLeftHandRig.localToWorld(pistolMuzzleFallbackWorldPosition);
+    return pistolMuzzleFallbackWorldPosition;
+  };
+
+  if (heldInventoryItemId !== PISTOL_ITEM_ID) {
+    return fallback();
+  }
+
+  const pistolModel = heldInventoryModelById.get(PISTOL_ITEM_ID);
+  if (!pistolModel || pistolModel.parent !== inventoryLeftHandItemAnchor) {
+    return fallback();
+  }
+
+  const localBounds = pistolModel.userData.localBounds;
+  if (!localBounds || localBounds.isEmpty()) {
+    return fallback();
+  }
+
+  pistolMuzzleDirectionWorld.set(-0.15, 0.02, -1).applyQuaternion(camera.quaternion).normalize();
+  pistolModel.getWorldQuaternion(pistolMuzzleModelWorldQuaternion);
+  pistolMuzzleDirectionLocal
+    .copy(pistolMuzzleDirectionWorld)
+    .applyQuaternion(pistolMuzzleModelWorldQuaternion.invert())
+    .normalize();
+  if (pistolMuzzleDirectionLocal.lengthSq() < 0.000001) {
+    pistolMuzzleDirectionLocal.set(0, 0, -1);
+  }
+  // The pistol import points opposite the gameplay-forward barrel direction.
+  // Flip once so muzzle flash resolves to the actual barrel end.
+  pistolMuzzleDirectionLocal.negate();
+
+  localBounds.getCenter(pistolMuzzleBoundsCenter);
+  localBounds.getSize(pistolMuzzleBoundsSize);
+  pistolMuzzleSupportLocalPoint.copy(pistolMuzzleBoundsCenter);
+
+  const ax = Math.abs(pistolMuzzleDirectionLocal.x);
+  const ay = Math.abs(pistolMuzzleDirectionLocal.y);
+  const az = Math.abs(pistolMuzzleDirectionLocal.z);
+  if (ax >= ay && ax >= az) {
+    pistolMuzzleSupportLocalPoint.x =
+      pistolMuzzleDirectionLocal.x >= 0 ? localBounds.max.x : localBounds.min.x;
+  } else if (ay >= az) {
+    pistolMuzzleSupportLocalPoint.y =
+      pistolMuzzleDirectionLocal.y >= 0 ? localBounds.max.y : localBounds.min.y;
+  } else {
+    pistolMuzzleSupportLocalPoint.z =
+      pistolMuzzleDirectionLocal.z >= 0 ? localBounds.max.z : localBounds.min.z;
+  }
+
+  pistolMuzzleSupportLocalPoint.addScaledVector(pistolMuzzleDirectionLocal, -4);
+  // Add a small amount of camera right to the left
+  // to prevent the muzzle flash from being exactly flush with geometry when looking straight at it.
+
+  pistolMuzzleWorldPosition.copy(pistolMuzzleSupportLocalPoint);
+  pistolModel.localToWorld(pistolMuzzleWorldPosition);
+  pistolMuzzleWorldPosition.addScaledVector(
+    pistolMuzzleDirectionWorld,
+    PISTOL_MUZZLE_FORWARD_WORLD_OFFSET,
+  );
+  return pistolMuzzleWorldPosition;
+}
+
+function randomizePistolMuzzleFlashFrame() {
+  const frameIndex = Math.floor(Math.random() * PISTOL_MUZZLE_FLASH_FRAME_COUNT);
+  muzzleFlashTexture.offset.x = frameIndex * PISTOL_MUZZLE_FLASH_FRAME_WIDTH;
+}
+
+function updatePistolMuzzleFlashTransform() {
+  const muzzleWorldPosition = resolvePistolMuzzleWorldPosition();
+  pistolMuzzleFlashSprite.position.copy(muzzleWorldPosition);
+  pistolMuzzleFlashLight.position.copy(muzzleWorldPosition);
+}
+
+function updatePistolVisualEffects(deltaSeconds) {
+  pistolRecoilAmount +=
+    (0 - pistolRecoilAmount) * Math.min(1, deltaSeconds * PISTOL_RECOIL_RETURN_RATE);
+
+  const selectedIsPistol = getSelectedInventoryItem()?.id === PISTOL_ITEM_ID;
+  if (selectedIsPistol || pistolRecoilAmount > 0.0004) {
+    inventoryLeftHandRig.position.x += PISTOL_RECOIL_POSITION_KICK.x * pistolRecoilAmount;
+    inventoryLeftHandRig.position.y += PISTOL_RECOIL_POSITION_KICK.y * pistolRecoilAmount;
+    inventoryLeftHandRig.position.z += PISTOL_RECOIL_POSITION_KICK.z * pistolRecoilAmount;
+    inventoryLeftHandRig.rotation.x += PISTOL_RECOIL_ROTATION_KICK.x * pistolRecoilAmount;
+    inventoryLeftHandRig.rotation.y += PISTOL_RECOIL_ROTATION_KICK.y * pistolRecoilAmount;
+    inventoryLeftHandRig.rotation.z += PISTOL_RECOIL_ROTATION_KICK.z * pistolRecoilAmount;
+  }
+
+  updatePistolMuzzleFlashTransform();
+
+  const flashVisible = pistolMuzzleFlashRemaining > 0 && gameActive && !isTopDownView;
+  if (!flashVisible) {
+    pistolMuzzleFlashMaterial.opacity = 0;
+    pistolMuzzleFlashSprite.visible = false;
+    pistolMuzzleFlashLight.intensity = 0;
+    pistolMuzzleFlashRemaining = Math.max(0, pistolMuzzleFlashRemaining - deltaSeconds);
+    return;
+  }
+
+  const normalizedLife = THREE.MathUtils.clamp(
+    pistolMuzzleFlashRemaining / PISTOL_MUZZLE_FLASH_DURATION,
+    0,
+    1,
+  );
+  const strength = Math.max(0, Math.pow(normalizedLife, 0.38));
+  const flashSize = 0.5 + strength * 0.5;
+
+  pistolMuzzleFlashMaterial.opacity = 0.35 + strength * 0.5;
+  pistolMuzzleFlashSprite.visible = true;
+  pistolMuzzleFlashSprite.scale.set(flashSize, flashSize, flashSize);
+  pistolMuzzleFlashLight.intensity = 1.2 + strength * 2.2;
+  pistolMuzzleFlashLight.distance = 3.2 + strength * 2.8;
+  pistolMuzzleFlashRemaining = Math.max(0, pistolMuzzleFlashRemaining - deltaSeconds);
+}
+
+function getBulletAmmoCount() {
+  let count = 0;
+  for (const item of inventory) {
+    if (item?.id === BULLET_ITEM_ID) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function consumeBulletAmmo() {
+  for (let i = INVENTORY_MAX_ITEMS - 1; i >= 0; i -= 1) {
+    if (inventory[i]?.id !== BULLET_ITEM_ID) {
+      continue;
+    }
+    inventory[i] = null;
+    return true;
+  }
+  return false;
+}
+
+function isDescendantOf(node, rootNode) {
+  let current = node;
+  while (current) {
+    if (current === rootNode) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function getPropHitLabel(object) {
+  let current = object;
+  while (current && current !== propScatter.root) {
+    const candidate = `${current.name || ""}`.trim();
+    if (candidate && candidate.toLowerCase() !== "scene") {
+      return candidate;
+    }
+    current = current.parent;
+  }
+  return "prop";
+}
+
+function describePistolHit(hit) {
+  if (!hit?.object) {
+    return null;
+  }
+
+  const target = hit.object;
+  if (target === wallMesh) {
+    return { type: "wall", label: "wall", distance: hit.distance };
+  }
+  if (target === floorMesh) {
+    return { type: "floor", label: "floor", distance: hit.distance };
+  }
+  if (target === roofMesh) {
+    return { type: "ceiling", label: "ceiling", distance: hit.distance };
+  }
+  if (isDescendantOf(target, propScatter.root)) {
+    return { type: "prop", label: getPropHitLabel(target), distance: hit.distance };
+  }
+  return { type: "surface", label: target.name || "surface", distance: hit.distance };
+}
+
+function resolvePistolShotDirection(directionOverride) {
+  if (directionOverride?.isVector3) {
+    pistolShotDirection.copy(directionOverride);
+  } else {
+    pistolShotDirection.set(0, 0, -1).applyQuaternion(camera.quaternion);
+  }
+  if (pistolShotDirection.lengthSq() < 0.000001) {
+    pistolShotDirection.set(0, 0, -1);
+  }
+  pistolShotDirection.normalize();
+  return pistolShotDirection;
+}
+
+function performPistolHitScan(directionOverride = null, targetsOverride = null, maxRangeOverride = null) {
+  resolvePistolShotDirection(directionOverride);
+
+  pistolRaycaster.set(camera.position, pistolShotDirection);
+  pistolRaycaster.near = 0.05;
+  const hasRangeOverride =
+    maxRangeOverride === Infinity ||
+    (Number.isFinite(maxRangeOverride) && maxRangeOverride > 0);
+  pistolRaycaster.far = hasRangeOverride ? maxRangeOverride : PISTOL_FIRE_RANGE;
+
+  const targets = Array.isArray(targetsOverride)
+    ? targetsOverride.filter(Boolean)
+    : [wallMesh, floorMesh, roofMesh, ...(propScatter.root?.children || [])].filter(Boolean);
+  if (!targets.length) {
+    return null;
+  }
+  const intersections = pistolRaycaster.intersectObjects(targets, true);
+  return intersections[0] || null;
+}
+
+function pushBulletDecalMesh(decalMesh) {
+  scene.add(decalMesh);
+  bulletDecals.push(decalMesh);
+
+  while (bulletDecals.length > BULLET_DECAL_MAX_COUNT) {
+    const oldest = bulletDecals.shift();
+    if (!oldest) {
+      continue;
+    }
+    scene.remove(oldest);
+    oldest.geometry?.dispose?.();
+  }
+}
+
+function resolveBulletDecalSurfaceNormal(hit, outNormal) {
+  if (!hit?.face || !hit?.object) {
+    return false;
+  }
+
+  outNormal.copy(hit.face.normal);
+  if (hit.object.isInstancedMesh && hit.instanceId !== undefined) {
+    hit.object.getMatrixAt(hit.instanceId, bulletDecalInstanceMatrix);
+    bulletDecalInstanceWorldMatrix.multiplyMatrices(
+      hit.object.matrixWorld,
+      bulletDecalInstanceMatrix,
+    );
+    bulletDecalNormalMatrix.getNormalMatrix(bulletDecalInstanceWorldMatrix);
+    outNormal.applyNormalMatrix(bulletDecalNormalMatrix);
+  } else {
+    bulletDecalNormalMatrix.getNormalMatrix(hit.object.matrixWorld);
+    outNormal.applyNormalMatrix(bulletDecalNormalMatrix);
+  }
+  outNormal.normalize();
+
+  bulletDecalRayDirection.copy(pistolRaycaster.ray.direction);
+  if (bulletDecalRayDirection.lengthSq() > 0.000001 && outNormal.dot(bulletDecalRayDirection) > 0) {
+    outNormal.negate();
+  }
+
+  return true;
+}
+
+function resolveBulletDecalTransformFromHit(hit) {
+  if (!resolveBulletDecalSurfaceNormal(hit, bulletDecalNormal)) {
+    return false;
+  }
+
+  bulletDecalPosition.copy(hit.point).addScaledVector(bulletDecalNormal, 0.006);
+  bulletDecalLookTarget.copy(bulletDecalPosition).add(bulletDecalNormal);
+
+  // Match the official three.js decals example flow:
+  // position a helper and orient it by looking along the hit normal.
+  bulletDecalProjector.position.copy(bulletDecalPosition);
+  bulletDecalProjector.lookAt(bulletDecalLookTarget);
+  bulletDecalRotation.copy(bulletDecalProjector.rotation);
+  bulletDecalRotation.z = Math.random() * Math.PI * 2;
+  return true;
+}
+
+function spawnFallbackBulletDecalPlane(hit, size) {
+  if (!resolveBulletDecalTransformFromHit(hit)) {
+    return false;
+  }
+
+  const plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(size, size),
+    pistolImpactDebugEnabled ? bulletDecalDebugMaterial : bulletDecalLitMaterial,
+  );
+  plane.quaternion.copy(bulletDecalProjector.quaternion);
+  plane.rotateZ(bulletDecalRotation.z);
+  plane.position.copy(bulletDecalPosition);
+  plane.renderOrder = 12;
+  pushBulletDecalMesh(plane);
+  return true;
+}
+
+function spawnBulletDecal(hit) {
+  const targetMesh = hit?.object?.isMesh ? hit.object : null;
+  if (!targetMesh || !resolveBulletDecalTransformFromHit(hit)) {
+    return false;
+  }
+
+  const randomizedSize =
+    BULLET_DECAL_SIZE + (Math.random() * 2 - 1) * BULLET_DECAL_SIZE_VARIANCE;
+  const finalSize = Math.max(0.18, randomizedSize);
+  bulletDecalSize.set(finalSize, finalSize, finalSize);
+
+  if (hit.instanceId !== undefined) {
+    return spawnFallbackBulletDecalPlane(hit, finalSize);
+  }
+
+  let decalGeometry = null;
+  try {
+    decalGeometry = new DecalGeometry(
+      targetMesh,
+      bulletDecalPosition,
+      bulletDecalRotation,
+      bulletDecalSize,
+    );
+  } catch {
+    decalGeometry = null;
+  }
+
+  if (!decalGeometry?.attributes?.position?.count) {
+    decalGeometry?.dispose?.();
+    return spawnFallbackBulletDecalPlane(hit, finalSize);
+  }
+
+  const decalMesh = new THREE.Mesh(
+    decalGeometry,
+    pistolImpactDebugEnabled ? bulletDecalDebugMaterial : bulletDecalLitMaterial,
+  );
+  decalMesh.renderOrder = 12;
+  pushBulletDecalMesh(decalMesh);
+  return true;
+}
+
+function recordPistolDebugMarker(hit) {
+  if (!pistolImpactDebugEnabled || !hit?.face || !hit?.object) {
+    return;
+  }
+
+  if (!resolveBulletDecalSurfaceNormal(hit, pistolHitDebugNormal)) {
+    return;
+  }
+  pistolDebugHitPoint.copy(hit.point).addScaledVector(pistolHitDebugNormal, 0.03);
+  pistolHitDebugMarker.position.copy(pistolDebugHitPoint);
+  pistolHitDebugMarker.visible = true;
+  pistolPropDebugMarkerRemaining = PISTOL_PROP_DEBUG_MARKER_LIFETIME;
+}
+
+function tryShootPistol(options = null) {
+  const selectedItem = getSelectedInventoryItem();
+  if (selectedItem?.id !== PISTOL_ITEM_ID) {
+    return false;
+  }
+  const bypassCooldown = Boolean(options?.bypassCooldown);
+  if (!bypassCooldown && pistolFireCooldownRemaining > 0) {
+    return true;
+  }
+
+  if (!pistolInfiniteAmmo && !consumeBulletAmmo()) {
+    if (pistolImpactDebugEnabled) {
+      setStatus("Pistol empty (debug). Add bullets or press I for infinite ammo.");
+    } else {
+      setStatus("Pistol empty. Pick up bullets or press I for debug infinite ammo.");
+    }
+    return true;
+  }
+
+  pistolFireCooldownRemaining = PISTOL_FIRE_COOLDOWN_SECONDS;
+  pistolRecoilAmount = Math.min(1, pistolRecoilAmount + 1);
+  randomizePistolMuzzleFlashFrame();
+  pistolMuzzleFlashRemaining = PISTOL_MUZZLE_FLASH_DURATION;
+
+  const hit = performPistolHitScan(
+    options?.direction || null,
+    options?.targetsOverride || null,
+    options?.maxRangeOverride ?? null,
+  );
+  let decalSpawned = false;
+  if (hit) {
+    decalSpawned = spawnBulletDecal(hit);
+    recordPistolDebugMarker(hit);
+  }
+  const hitInfo = describePistolHit(hit);
+
+  lastPistolHitInfo = hitInfo
+    ? {
+        ...hitInfo,
+        decalSpawned,
+        infiniteAmmo: pistolInfiniteAmmo,
+      }
+    : {
+        type: "miss",
+        label: "none",
+        distance: PISTOL_FIRE_RANGE,
+        decalSpawned: false,
+        infiniteAmmo: pistolInfiniteAmmo,
+      };
+
+  if (!pistolInfiniteAmmo) {
+    updateInventoryHud();
+    updatePickupPrompt();
+  }
+
+  if (pistolImpactDebugEnabled) {
+    const ammoText = pistolInfiniteAmmo ? "inf" : `${getBulletAmmoCount()}`;
+    if (hitInfo) {
+      setStatus(
+        `Pistol hit ${hitInfo.type} (${hitInfo.label}) @ ${hitInfo.distance.toFixed(2)}m | ammo: ${ammoText}`,
+      );
+    } else {
+      setStatus(`Pistol missed | ammo: ${ammoText}`);
+    }
+    return true;
+  }
+
+  if (pistolInfiniteAmmo) {
+    setStatus("Pistol fired (infinite debug ammo).");
+    return true;
+  }
+
+  setStatus(`Pistol fired. Ammo left: ${getBulletAmmoCount()}.`);
+  return true;
+}
+
+function tryShootPistolAtNearestProp() {
+  const selectedItem = getSelectedInventoryItem();
+  if (selectedItem?.id !== PISTOL_ITEM_ID) {
+    return false;
+  }
+
+  let bestHitDistance = Infinity;
+  let hasPropHit = false;
+  const propTargets = propScatter.root?.children || [];
+
+  for (const rootNode of propTargets) {
+    pistolPropBounds.setFromObject(rootNode);
+    if (pistolPropBounds.isEmpty()) {
+      continue;
+    }
+    pistolPropBounds.getCenter(pistolPropCenter);
+    pistolNearestPropWorld.copy(pistolPropCenter);
+    pistolNearestPropDirection.subVectors(pistolNearestPropWorld, camera.position);
+    const distSq = pistolNearestPropDirection.lengthSq();
+    if (distSq <= 0.0001) {
+      continue;
+    }
+
+    pistolNearestPropDirection.normalize();
+    pistolRaycaster.set(camera.position, pistolNearestPropDirection);
+    pistolRaycaster.near = 0.05;
+    pistolRaycaster.far = Infinity;
+    const propHits = pistolRaycaster.intersectObjects(propTargets, true);
+    if (propHits.length && propHits[0].distance < bestHitDistance) {
+      bestHitDistance = propHits[0].distance;
+      hasPropHit = true;
+      pistolNearestPropWorld.copy(propHits[0].point);
+    }
+  }
+
+  if (!hasPropHit) {
+    return false;
+  }
+  pistolNearestPropDirection.subVectors(pistolNearestPropWorld, camera.position).normalize();
+
+  return tryShootPistol({
+    direction: pistolNearestPropDirection,
+    bypassCooldown: true,
+    targetsOverride: propTargets,
+    maxRangeOverride: Infinity,
+  });
 }
 
 function getMeleeWeaponConfig(itemId) {
@@ -1932,6 +3169,11 @@ function normalizeHeldInventoryModel(model, itemId) {
   if (tuning?.rotation) {
     model.rotation.set(tuning.rotation[0], tuning.rotation[1], tuning.rotation[2]);
   }
+  model.updateMatrixWorld(true);
+  heldItemLocalBoundsScratch.setFromObject(model);
+  if (!heldItemLocalBoundsScratch.isEmpty()) {
+    model.userData.localBounds = heldItemLocalBoundsScratch.clone();
+  }
 }
 
 function ensureHeldInventoryModel(itemId) {
@@ -2039,7 +3281,7 @@ function updateInventoryHud() {
   setInventoryWheelRotationSteps(inventoryWheelRotationSteps);
 
   if (inventoryCount) {
-    inventoryCount.textContent = `${inventory.length}/${INVENTORY_MAX_ITEMS}`;
+    inventoryCount.textContent = `${getInventoryOccupiedCount()}/${INVENTORY_MAX_ITEMS}`;
   }
   if (inventorySelectionOutline) {
     inventorySelectionOutline.style.display = "grid";
@@ -2102,7 +3344,8 @@ function updatePickupPrompt() {
     return;
   }
 
-  if (inventory.length >= INVENTORY_MAX_ITEMS) {
+  const occupiedCount = getInventoryOccupiedCount();
+  if (occupiedCount >= INVENTORY_MAX_ITEMS) {
     interactionHint.textContent = `Inventory full (${INVENTORY_MAX_ITEMS}/${INVENTORY_MAX_ITEMS})`;
     return;
   }
@@ -2114,7 +3357,7 @@ function tryPickupNearest() {
   if (!gameActive || isTopDownView) {
     return;
   }
-  if (inventory.length >= INVENTORY_MAX_ITEMS) {
+  if (getInventoryOccupiedCount() >= INVENTORY_MAX_ITEMS) {
     setStatus(`Inventory full (${INVENTORY_MAX_ITEMS} items max).`);
     updatePickupPrompt();
     return;
@@ -2128,7 +3371,13 @@ function tryPickupNearest() {
     return;
   }
 
-  inventory.push({ id: picked.id, name: picked.name });
+  const emptySlotIndex = findFirstEmptyInventorySlotIndex();
+  if (emptySlotIndex < 0) {
+    setStatus(`Inventory full (${INVENTORY_MAX_ITEMS} items max).`);
+    updatePickupPrompt();
+    return;
+  }
+  inventory[emptySlotIndex] = { id: picked.id, name: picked.name };
   updateInventoryHud();
   updatePickupPrompt();
   setStatus(`Picked up ${picked.name}.`);
@@ -2137,15 +3386,18 @@ function tryPickupNearest() {
 function grantDebugInventory() {
   inventory.length = 0;
   for (const item of DEBUG_INVENTORY_ITEMS) {
-    if (inventory.length >= INVENTORY_MAX_ITEMS) {
+    const emptySlotIndex = findFirstEmptyInventorySlotIndex();
+    if (emptySlotIndex < 0) {
       break;
     }
-    inventory.push({ id: item.id, name: item.name });
+    inventory[emptySlotIndex] = { id: item.id, name: item.name };
   }
   setInventoryWheelRotationSteps(0);
+  pistolInfiniteAmmo = true;
+  pistolFireCooldownRemaining = 0;
   updateInventoryHud();
   updatePickupPrompt();
-  setStatus("Debug inventory loaded (one of each item).");
+  setStatus("Debug inventory loaded (one of each item). Infinite pistol ammo enabled.");
 }
 
 function resizeRenderer() {
@@ -2186,11 +3438,15 @@ function round(value) {
 
 function toggleFlashlight() {
   flashlightEnabled = !flashlightEnabled;
-  setStatus(
-    flashlightEnabled
-      ? "Flashlight on. Press L to toggle."
-      : "Flashlight off. Press L to toggle.",
-  );
+  if (!flashlightEnabled) {
+    setStatus("Flashlight off. Press L to toggle.");
+    return;
+  }
+  if (isFlashlightSuppressedByTwoHandedBat()) {
+    setStatus("Flashlight on, but stowed while using the baseball bat.");
+    return;
+  }
+  setStatus("Flashlight on. Press L to toggle.");
 }
 
 function updateTopDownCamera() {
@@ -2288,6 +3544,21 @@ function renderGameToText() {
   const playerCell = worldToCell(camera.position.x, camera.position.z);
   const selectedInventoryItem = getSelectedInventoryItem();
   const selectedMeleeWeaponConfig = getMeleeWeaponConfig(selectedInventoryItem?.id);
+  const bulletAmmoCount = getBulletAmmoCount();
+  const selectedIsPistol = selectedInventoryItem?.id === PISTOL_ITEM_ID;
+  const selectedIsJerky = selectedInventoryItem?.id === JERKY_ITEM_ID;
+  const selectedIsFirstAidKit = selectedInventoryItem?.id === FIRST_AID_KIT_ITEM_ID;
+  const selectedIsSodaCan = selectedInventoryItem?.id === SODA_CAN_ITEM_ID;
+  const jerkyConsumeProgress = getJerkyConsumeProgress();
+  const consumableUseProgress = getActiveConsumableUseProgress();
+  const activeJerkyConsume = jerkyConsumeActive && consumableUseItemId === JERKY_ITEM_ID;
+  const healthRatio = PLAYER_MAX_HEALTH > 0 ? playerHealth / PLAYER_MAX_HEALTH : 0;
+  const lastPistolHitPayload = lastPistolHitInfo
+    ? {
+        ...lastPistolHitInfo,
+        distance: round(lastPistolHitInfo.distance),
+      }
+    : null;
 
   return JSON.stringify({
     mode: hasWon ? "cleared" : gameActive ? "playing" : "paused",
@@ -2314,17 +3585,58 @@ function renderGameToText() {
       won: hasWon,
       gameActive,
       topDownView: isTopDownView,
-      flashlightOn: flashlightEnabled,
+      flashlightOn: isFlashlightEmissionActive(),
+      flashlightSuppressedByTwoHandedBat: isFlashlightSuppressedByTwoHandedBat(),
       flashlightModelLoaded,
       sprinting: keyState.sprint,
       meleeSwinging: meleeSwingActive,
       meleeCooldownSeconds: round(meleeCooldownRemaining),
+      playerDead: playerHealth <= 0,
+      pistolInfiniteAmmo,
+      pistolCooldownSeconds: round(pistolFireCooldownRemaining),
+      pistolImpactDebug: pistolImpactDebugEnabled,
+      pistolRecoil: round(pistolRecoilAmount),
+      pistolMuzzleFlash: round(pistolMuzzleFlashRemaining),
+      jerkyConsumeActive: activeJerkyConsume,
+      jerkyConsumeProgress: round(jerkyConsumeProgress),
+      consumableUseActive: jerkyConsumeActive,
+      consumableUseItemId,
+      consumableUseProgress: round(consumableUseProgress),
+      sodaBoostSeconds: round(sodaSpeedBoostRemaining),
+      firstAidRegenSeconds: round(firstAidRegenRemaining),
+      speedMultiplier: round(getPlayerSpeedMultiplier()),
     },
-    inventory: inventory.map((item, index) => ({
-      slot: index + 1,
-      id: item.id,
-      name: item.name,
-    })),
+    health: {
+      current: round(playerHealth),
+      trail: round(playerHealthDamageTrail),
+      max: PLAYER_MAX_HEALTH,
+      ratio: round(healthRatio),
+      percent: round(healthRatio * 100),
+      trailPercent: round(
+        (PLAYER_MAX_HEALTH > 0 ? playerHealthDamageTrail / PLAYER_MAX_HEALTH : 0) * 100,
+      ),
+    },
+    ammo: {
+      bulletCount: bulletAmmoCount,
+      pistolInfinite: pistolInfiniteAmmo,
+    },
+    decals: {
+      bulletCount: bulletDecals.length,
+    },
+    pistol: {
+      lastHit: lastPistolHitPayload,
+    },
+    inventory: inventory.flatMap((item, index) =>
+      item
+        ? [
+            {
+              slot: index + 1,
+              id: item.id,
+              name: item.name,
+            },
+          ]
+        : [],
+    ),
     selectedInventory: selectedInventoryItem
       ? {
           slot: getSelectedInventorySlotIndex() + 1,
@@ -2336,6 +3648,53 @@ function renderGameToText() {
                   range: selectedMeleeWeaponConfig.range,
                   cooldownSeconds: selectedMeleeWeaponConfig.cooldownSeconds,
                 }
+              : null,
+          pistol:
+            selectedIsPistol
+              ? {
+                  range: PISTOL_FIRE_RANGE,
+                  infiniteAmmo: pistolInfiniteAmmo,
+                  ammo: bulletAmmoCount,
+                }
+              : null,
+          consumable:
+            selectedIsJerky
+              ? {
+                  type: "jerky",
+                  holdDurationSeconds: JERKY_CONSUME_DURATION_SECONDS,
+                  healAmount: JERKY_HEAL_AMOUNT,
+                  holdProgress: round(jerkyConsumeProgress),
+                  active: activeJerkyConsume,
+                }
+              : selectedIsFirstAidKit
+                ? {
+                    type: "first_aid_kit",
+                    consumeDurationSeconds: FIRST_AID_USE_DURATION_SECONDS,
+                    instantHealAmount: FIRST_AID_KIT_HEAL_AMOUNT,
+                    regenPerSecond: FIRST_AID_REGEN_PER_SECOND,
+                    regenDurationSeconds: FIRST_AID_REGEN_DURATION_SECONDS,
+                    activeRegenSeconds: round(firstAidRegenRemaining),
+                    holdProgress:
+                      jerkyConsumeActive && consumableUseItemId === FIRST_AID_KIT_ITEM_ID
+                        ? round(consumableUseProgress)
+                        : 0,
+                    activeUse:
+                      jerkyConsumeActive && consumableUseItemId === FIRST_AID_KIT_ITEM_ID,
+                  }
+                : selectedIsSodaCan
+                  ? {
+                      type: "soda_can",
+                      consumeDurationSeconds: SODA_USE_DURATION_SECONDS,
+                      speedMultiplier: SODA_SPEED_MULTIPLIER,
+                      durationSeconds: SODA_SPEED_DURATION_SECONDS,
+                      activeSpeedBoostSeconds: round(sodaSpeedBoostRemaining),
+                      holdProgress:
+                        jerkyConsumeActive && consumableUseItemId === SODA_CAN_ITEM_ID
+                          ? round(consumableUseProgress)
+                          : 0,
+                      activeUse:
+                        jerkyConsumeActive && consumableUseItemId === SODA_CAN_ITEM_ID,
+                    }
               : null,
           wheelRotationDegrees: round(
             normalizeInventorySlotIndex(inventoryWheelRotationSteps) *

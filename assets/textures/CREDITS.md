@@ -40,6 +40,39 @@ Environment textures below are from Poly Haven and are licensed under CC0 1.0.
 - Original file URL:
   - `https://opengameart.org/sites/default/files/t_flashlightpattern_0.png`
 
+### Muzzle Flash Sprite
+- Asset: Muzzle Flash Particle
+- Asset page: https://opengameart.org/content/muzzle-flash-particle
+- Creator: doug
+- License: CC0 1.0
+- License URL: http://creativecommons.org/publicdomain/zero/1.0/
+- File used:
+  - `light/muzzle-flash-sheet-cc0.png`
+- Original file URL:
+  - `https://opengameart.org/sites/default/files/muzzleFlash0_0.png`
+
+### Bullet Hole Decal
+- Asset: Bullet Decal
+- Asset page: https://opengameart.org/content/bullet-decal
+- Creator: musdasch
+- License: CC0 1.0
+- License URL: http://creativecommons.org/publicdomain/zero/1.0/
+- File used:
+  - `decals/bullet-hole-impact-cc0.png`
+- Original file URL:
+  - `https://opengameart.org/sites/default/files/bullet_hole_0.png`
+
+### Health HUD Heart Icon
+- Asset: Red heart illustration
+- Asset page: https://commons.wikimedia.org/wiki/File:Red_heart_illustration.png
+- Creator: RawPixel
+- License: CC0 1.0 (commercial use allowed with attribution optional)
+- License URL: https://creativecommons.org/publicdomain/zero/1.0/
+- File used:
+  - `ui/red-heart-illustration.png`
+- Original file URL:
+  - `https://upload.wikimedia.org/wikipedia/commons/9/90/Red_heart_illustration.png`
+
 ## Model Credits
 
 ### Flashlight
