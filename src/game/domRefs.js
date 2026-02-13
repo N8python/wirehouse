@@ -1,0 +1,22 @@
+export function getDomRefs() {
+  return {
+    app: document.querySelector("#app"),
+    overlay: document.querySelector("#overlay"),
+    startButton: document.querySelector("#start-btn"),
+    status: document.querySelector("#status"),
+    crosshair: document.querySelector("#crosshair"),
+    inventoryRadial: document.querySelector("#inventory-radial"),
+    inventoryCount: document.querySelector("#inventory-count"),
+    interactionHint: document.querySelector("#interaction-hint"),
+    healthRingFill: document.querySelector("#health-ring-fill"),
+    healthRingLoss: document.querySelector("#health-ring-loss"),
+    healthHeartImage: document.querySelector("#health-heart-image"),
+    consumeProgress: document.querySelector("#consume-progress"),
+    consumeProgressFill: document.querySelector("#consume-progress-fill"),
+    consumeProgressLabel: document.querySelector("#consume-progress-label"),
+    sodaBoostIndicator: document.querySelector("#soda-boost-indicator"),
+    sodaBoostTimer: document.querySelector("#soda-boost-timer"),
+    regenIndicator: document.querySelector("#regen-indicator"),
+    regenTimer: document.querySelector("#regen-timer"),
+  };
+}

@@ -529,3 +529,28 @@ Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedu
     - `/Users/natebreslow/Documents/analogHorrorAtHome/output/inventory-slot-smoke-client/shot-0.png`
     - `/Users/natebreslow/Documents/analogHorrorAtHome/output/inventory-slot-smoke-client/state-0.json`
   - No runtime errors in these runs (`errors.json` not produced).
+- Refactored `src/game.js` into a modular composition root + subsystem architecture so no source file exceeds 600 lines:
+  - New app entry/composition: `src/game/app.js`
+  - Runtime bootstrap: `src/game/setupRuntime.js`
+  - Shared constants and DOM queries: `src/game/constants.js`, `src/game/domRefs.js`
+  - Systems split by domain:
+    - `src/game/systems/worldSystem.js`
+    - `src/game/systems/playerViewSystem.js`
+    - `src/game/systems/flashlightSystem.js`
+    - `src/game/systems/inventorySystem.js`
+    - `src/game/systems/heldItemDisplaySystem.js`
+    - `src/game/systems/healthConsumableSystem.js`
+    - `src/game/systems/pistolSystem.js`
+    - `src/game/systems/pistolDecalSystem.js`
+    - `src/game/systems/meleeSystem.js`
+  - Debug/state serialization split out: `src/game/debugApi.js`, `src/game/renderGameToText.js`, `src/game/utils.js`
+  - `src/game.js` is now a 3-line bootstrap (`createGameApp()` call).
+- Verified line-count target for source files (`src/**`): max is now 561 lines (`src/game/app.js`), all under 600.
+- Validation loop:
+  - Ran develop-web-game Playwright client (`web_game_playwright_client.js`) with click choreography and captured artifacts in `output/refactor-client-start/` and `output/web-game/`.
+  - Added targeted Playwright smoke validation with explicit gameplay flow + debug hooks and SwiftShader flags:
+    - Artifacts: `output/refactor-validation/gameplay-after-refactor.png`, `output/refactor-validation/state-before.json`, `output/refactor-validation/state-after.json`, `output/refactor-validation/console-errors.json`.
+    - Confirmed: mode transitions to `playing`, movement displacement > 0, pistol selected/fire path works, decal count increments, and no console/page errors.
+- Notes / TODO:
+  - `package.json` remains `"type": "commonjs"` while browser code is ESM; this is unchanged from prior state but makes Node-based static checks noisy.
+  - Could add lightweight browser CI smoke test script using the same SwiftShader flags to guard against future wiring regressions.
