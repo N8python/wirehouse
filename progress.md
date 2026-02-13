@@ -86,6 +86,24 @@ Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedu
   - `output/flashlight-pattern/state-1.json`
   - `output/flashlight-pattern/state-2.json`
   - Runtime errors: none emitted in this run.
+- Added melee attacks on left click for `knife_01` and `baseball_bat_01`:
+  - New per-weapon melee config in `src/game.js` (range, cooldown, swing duration, swing motion offsets).
+  - Added left-click pointer handler gated to active first-person gameplay.
+  - Added melee hit-scan raycast against walls/props/pickups/exit marker and status text feedback (`hit ...` / `missed`).
+  - Added swing animation blending on the held-item rig and per-frame cooldown updates.
+  - Added melee state fields in `render_game_to_text` (`flags.meleeSwinging`, `flags.meleeCooldownSeconds`, `selectedInventory.meleeAttack`).
+- Updated control copy to mention melee:
+  - `index.html` start overlay now lists `Melee (knife/bat): Left Click`.
+  - `src/config.js` gameplay hint now mentions left-click melee.
+- Validation notes:
+  - Skill client run saved `output/melee-leftclick-client/shot-*.png` and `state-*.json` with no `errors-*.json`, but the scripted click did not consistently press `Enter Maze` in this environment.
+  - Added focused Playwright verification with deterministic stepping and debug inventory:
+    - Screenshots: `output/melee-validation/knife-swing.png`, `output/melee-validation/bat-swing.png`
+    - State trace: `output/melee-validation/states.json`
+    - Console/page errors: none (`output/melee-validation/console-errors.json` not created)
+  - Confirmed in state trace:
+    - Knife left-click sets `flags.meleeSwinging=true` and non-zero cooldown, then returns to idle.
+    - Rotating selection to bat and left-clicking does the same with bat-specific cooldown/range metadata.
 
 ## TODO
 - Optional: add touch controls (virtual joystick/look) for mobile playability beyond layout compatibility.
@@ -105,3 +123,16 @@ Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedu
   - `pom=0.000`: 1.9994 FPS
   - `pom=1.000`: 1.5999 FPS
 - Observed in this environment: approx +25.0% at `pom=0` and +14.3% at `pom=1` versus the earlier baseline run.
+- Added fixed inventory selection outline behavior (gold selector remains fixed at top while blue slots rotate into it), and bound `I` to populate one-of-each debug inventory.
+- Added deterministic debug hooks for browser automation:
+  - `window.__debugGrantInventory()`
+  - `window.__debugRotateInventory(step)`
+  - `window.__debugGetSelectedInventoryId()`
+- Tuned held-item display for all eight pickup IDs via `HELD_ITEM_DISPLAY_TUNING` (per-item size/offset/rotation), and added camera-attached held-item inspection lighting to improve visibility during tuning.
+- Ran Playwright-based item-cycling capture loops and reviewed resulting screenshots:
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/item-tuning-pass4/*.png`
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/item-tuning-pass5/*.png`
+- Ran skill client sanity pass:
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/item-tuning-client/shot-0.png`
+  - `/Users/natebreslow/Documents/analogHorrorAtHome/output/item-tuning-client/state-0.json`
+  - No `errors-*.json` produced in this run.
