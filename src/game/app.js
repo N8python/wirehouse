@@ -98,7 +98,7 @@ export function createGameApp() {
   const GAME_OVER_CAMERA_TARGET_ROLL_RADIANS = Math.PI * 0.5;
   const RESULT_OVERLAY_FADE_DURATION_SECONDS = 3;
   const WIREMAN_WIN_SCREEN_DELAY_SECONDS = 5;
-  const DEBUG_KEY_ENABLED = true;
+  const DEBUG_KEY_ENABLED = false;
   const DEBUG_KEY_CODES = new Set([
     "KeyH",
     "Slash",
@@ -940,6 +940,7 @@ export function createGameApp() {
     sound.markUserGesture();
     sound.startBgmLoop();
     resetGameOverState();
+    resetMovementInput();
     gameActive = true;
     isTopDownView = false;
     health.cancelJerkyConsume();
@@ -1186,6 +1187,7 @@ export function createGameApp() {
     });
     runtime.controls.addEventListener("unlock", () => {
       health.cancelJerkyConsume();
+      resetMovementInput();
       if (suppressUnlockPause) {
         suppressUnlockPause = false;
         return;
@@ -1210,7 +1212,10 @@ export function createGameApp() {
     });
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
-    window.addEventListener("blur", () => health.cancelJerkyConsume());
+    window.addEventListener("blur", () => {
+      health.cancelJerkyConsume();
+      resetMovementInput();
+    });
     window.addEventListener("resize", resizeRenderer);
     document.addEventListener("fullscreenchange", resizeRenderer);
     configureDebugApis({
