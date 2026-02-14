@@ -23,6 +23,7 @@ export function createPistolSystem({
   pistolMuzzleFlashSprite,
   pistolMuzzleFlashLight,
   pistolHitDebugMarker,
+  getWireman,
 }) {
   const {
     INVENTORY_MAX_ITEMS,
@@ -39,7 +40,11 @@ export function createPistolSystem({
     PISTOL_MUZZLE_FORWARD_WORLD_OFFSET,
     PISTOL_MUZZLE_FLASH_DURATION,
     PISTOL_PROP_DEBUG_MARKER_LIFETIME,
+    WIREMAN_PISTOL_DAMAGE,
   } = constants;
+  const PISTOL_COOLDOWN_IDLE_DROP_Y = 0.0;
+  const PISTOL_COOLDOWN_OFFSET_HALF_LIFE_SECONDS = 0.05;
+  const PISTOL_ATTACK_ANIMATION_RECOIL_THRESHOLD = 0.33;
 
   const pistolRaycaster = new THREE.Raycaster();
   const pistolMuzzleWorldPosition = new THREE.Vector3();
@@ -69,6 +74,7 @@ export function createPistolSystem({
   let pistolInfiniteAmmo = false;
   let pistolFireCooldownRemaining = 0;
   let pistolRecoilAmount = 0;
+  let pistolCooldownVisualOffsetY = 0;
   let pistolMuzzleFlashRemaining = 0;
   let pistolImpactDebugEnabled = false;
   let pistolPropDebugMarkerRemaining = 0;
@@ -78,6 +84,7 @@ export function createPistolSystem({
     pistolInfiniteAmmo = false;
     pistolFireCooldownRemaining = 0;
     pistolRecoilAmount = 0;
+    pistolCooldownVisualOffsetY = 0;
     pistolMuzzleFlashRemaining = 0;
     pistolImpactDebugEnabled = false;
     pistolPropDebugMarkerRemaining = 0;
@@ -220,6 +227,12 @@ export function createPistolSystem({
     muzzleFlashTexture.offset.x = frameIndex * PISTOL_MUZZLE_FLASH_FRAME_WIDTH;
   }
 
+  function emaTowards(current, target, deltaSeconds, halfLifeSeconds) {
+    const safeHalfLife = Math.max(0.0001, halfLifeSeconds);
+    const blend = 1 - Math.pow(0.5, Math.max(0, deltaSeconds) / safeHalfLife);
+    return current + (target - current) * blend;
+  }
+
   function updatePistolMuzzleFlashTransform() {
     const muzzleWorldPosition = resolvePistolMuzzleWorldPosition();
     pistolMuzzleFlashSprite.position.copy(muzzleWorldPosition);
@@ -239,6 +252,31 @@ export function createPistolSystem({
       inventoryLeftHandRig.rotation.x += PISTOL_RECOIL_ROTATION_KICK.x * pistolRecoilAmount;
       inventoryLeftHandRig.rotation.y += PISTOL_RECOIL_ROTATION_KICK.y * pistolRecoilAmount;
       inventoryLeftHandRig.rotation.z += PISTOL_RECOIL_ROTATION_KICK.z * pistolRecoilAmount;
+    }
+
+    let pistolCooldownTargetOffsetY = 0;
+    if (selectedIsPistol && pistolFireCooldownRemaining > 0) {
+      const cooldownRatio = THREE.MathUtils.clamp(
+        pistolFireCooldownRemaining / Math.max(0.0001, PISTOL_FIRE_COOLDOWN_SECONDS),
+        0,
+        1,
+      );
+      const attackAnimationActive =
+        pistolMuzzleFlashRemaining > 0.0001 ||
+        pistolRecoilAmount > PISTOL_ATTACK_ANIMATION_RECOIL_THRESHOLD;
+      if (!attackAnimationActive) {
+        const cooldownBlend = THREE.MathUtils.smoothstep(cooldownRatio, 0, 1);
+        pistolCooldownTargetOffsetY = -PISTOL_COOLDOWN_IDLE_DROP_Y * cooldownBlend;
+      }
+    }
+    pistolCooldownVisualOffsetY = emaTowards(
+      pistolCooldownVisualOffsetY,
+      pistolCooldownTargetOffsetY,
+      deltaSeconds,
+      PISTOL_COOLDOWN_OFFSET_HALF_LIFE_SECONDS,
+    );
+    if (selectedIsPistol) {
+      inventoryLeftHandRig.position.y += pistolCooldownVisualOffsetY;
     }
 
     updatePistolMuzzleFlashTransform();
@@ -291,12 +329,19 @@ export function createPistolSystem({
     return "prop";
   }
 
+  function isWiremanHitObject(object) {
+    return Boolean(getWireman?.()?.isHitObject?.(object));
+  }
+
   function describePistolHit(hit) {
     if (!hit?.object) {
       return null;
     }
 
     const target = hit.object;
+    if (isWiremanHitObject(target)) {
+      return { type: "wireman", label: "wireman", distance: hit.distance };
+    }
     const { wallMesh, floorMesh, roofMesh } = getWorldSurfaces();
     if (target === wallMesh) {
       return { type: "wall", label: "wall", distance: hit.distance };
@@ -326,15 +371,19 @@ export function createPistolSystem({
     return pistolShotDirection;
   }
 
+  function resolvePistolMaxRange(maxRangeOverride = null) {
+    const hasRangeOverride =
+      maxRangeOverride === Infinity ||
+      (Number.isFinite(maxRangeOverride) && maxRangeOverride > 0);
+    return hasRangeOverride ? maxRangeOverride : PISTOL_FIRE_RANGE;
+  }
+
   function performPistolHitScan(directionOverride = null, targetsOverride = null, maxRangeOverride = null) {
     resolvePistolShotDirection(directionOverride);
 
     pistolRaycaster.set(camera.position, pistolShotDirection);
     pistolRaycaster.near = 0.05;
-    const hasRangeOverride =
-      maxRangeOverride === Infinity ||
-      (Number.isFinite(maxRangeOverride) && maxRangeOverride > 0);
-    pistolRaycaster.far = hasRangeOverride ? maxRangeOverride : PISTOL_FIRE_RANGE;
+    pistolRaycaster.far = resolvePistolMaxRange(maxRangeOverride);
 
     const { wallMesh, floorMesh, roofMesh } = getWorldSurfaces();
     const targets = Array.isArray(targetsOverride)
@@ -376,14 +425,42 @@ export function createPistolSystem({
       options?.targetsOverride || null,
       options?.maxRangeOverride ?? null,
     );
+    const wireman = getWireman?.();
+    const allowWiremanCapsuleHit = !Array.isArray(options?.targetsOverride);
+    const wiremanCapsuleHit = allowWiremanCapsuleHit
+      ? wireman?.raycastCapsule?.({
+          origin: camera.position,
+          direction: pistolShotDirection,
+          maxDistance: resolvePistolMaxRange(options?.maxRangeOverride ?? null),
+        })
+      : null;
+    let resolvedHit = hit;
+    if (wiremanCapsuleHit && (!resolvedHit || wiremanCapsuleHit.distance <= resolvedHit.distance + 0.0001)) {
+      resolvedHit = {
+        object: wireman?.getRaycastTarget?.() || null,
+        distance: wiremanCapsuleHit.distance,
+        point: wiremanCapsuleHit.point
+          ? new THREE.Vector3(
+              wiremanCapsuleHit.point.x,
+              wiremanCapsuleHit.point.y,
+              wiremanCapsuleHit.point.z,
+            )
+          : null,
+      };
+    }
+
+    const hitWireman = Boolean(resolvedHit && wireman?.isHitObject?.(resolvedHit.object));
+    const wiremanDamageResult = hitWireman
+      ? wireman.applyDamage?.(WIREMAN_PISTOL_DAMAGE, "pistol_01")
+      : null;
     let decalSpawned = false;
-    if (hit) {
-      decalSpawned = decalSystem.spawnBulletDecal(hit, pistolImpactDebugEnabled);
-      if (decalSystem.recordDebugMarker(hit, pistolImpactDebugEnabled)) {
+    if (resolvedHit && !hitWireman) {
+      decalSpawned = decalSystem.spawnBulletDecal(resolvedHit, pistolImpactDebugEnabled);
+      if (decalSystem.recordDebugMarker(resolvedHit, pistolImpactDebugEnabled)) {
         pistolPropDebugMarkerRemaining = PISTOL_PROP_DEBUG_MARKER_LIFETIME;
       }
     }
-    const hitInfo = describePistolHit(hit);
+    const hitInfo = describePistolHit(resolvedHit);
 
     lastPistolHitInfo = hitInfo
       ? {
@@ -418,6 +495,19 @@ export function createPistolSystem({
 
     if (pistolInfiniteAmmo) {
       setStatus("Pistol fired (infinite debug ammo).");
+      return true;
+    }
+
+    if (wiremanDamageResult?.diedNow) {
+      setStatus("Pistol shot killed wireman.");
+      return true;
+    }
+    if (wiremanDamageResult?.applied) {
+      setStatus(
+        `Pistol hit wireman for ${Math.round(wiremanDamageResult.damageApplied)}. (${Math.round(
+          wiremanDamageResult.health,
+        )}/${Math.round(wiremanDamageResult.maxHealth)})`,
+      );
       return true;
     }
 

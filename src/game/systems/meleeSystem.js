@@ -7,14 +7,19 @@ export function createMeleeSystem({
   pickupSystem,
   inventoryLeftHandRig,
   getSelectedInventoryItem,
+  getWireman,
   setStatus,
 }) {
   const { MELEE_WEAPON_CONFIG } = constants;
+  const MELEE_COOLDOWN_IDLE_DROP_Y = 2;
+  const MELEE_COOLDOWN_OFFSET_HALF_LIFE_SECONDS = 0.05;
 
   const meleeRaycaster = new THREE.Raycaster();
   const meleeAttackForward = new THREE.Vector3();
 
   let meleeCooldownRemaining = 0;
+  let meleeCooldownDuration = 0;
+  let meleeCooldownVisualOffsetY = 0;
   let meleeSwingElapsed = 0;
   let meleeSwingDuration = 0;
   let meleeSwingActive = false;
@@ -22,10 +27,18 @@ export function createMeleeSystem({
 
   function reset() {
     meleeCooldownRemaining = 0;
+    meleeCooldownDuration = 0;
+    meleeCooldownVisualOffsetY = 0;
     meleeSwingElapsed = 0;
     meleeSwingDuration = 0;
     meleeSwingActive = false;
     meleeSwingWeaponId = null;
+  }
+
+  function emaTowards(current, target, deltaSeconds, halfLifeSeconds) {
+    const safeHalfLife = Math.max(0.0001, halfLifeSeconds);
+    const blend = 1 - Math.pow(0.5, Math.max(0, deltaSeconds) / safeHalfLife);
+    return current + (target - current) * blend;
   }
 
   function getMeleeWeaponConfig(itemId) {
@@ -57,14 +70,17 @@ export function createMeleeSystem({
     return "target";
   }
 
-  function performMeleeHitScan(weaponConfig) {
+  function resolveMeleeAttackDirection() {
     meleeAttackForward.set(0, 0, -1).applyQuaternion(camera.quaternion);
     if (meleeAttackForward.lengthSq() < 0.000001) {
       meleeAttackForward.set(0, 0, -1);
     }
     meleeAttackForward.normalize();
+    return meleeAttackForward;
+  }
 
-    meleeRaycaster.set(camera.position, meleeAttackForward);
+  function performMeleeHitScan(weaponConfig, direction) {
+    meleeRaycaster.set(camera.position, direction);
     meleeRaycaster.near = 0.05;
     meleeRaycaster.far = weaponConfig.range;
 
@@ -95,12 +111,39 @@ export function createMeleeSystem({
     }
 
     meleeCooldownRemaining = weaponConfig.cooldownSeconds;
+    meleeCooldownDuration = weaponConfig.cooldownSeconds;
     meleeSwingDuration = weaponConfig.swingDurationSeconds;
     meleeSwingElapsed = 0;
     meleeSwingActive = true;
     meleeSwingWeaponId = selectedItem.id;
 
-    const hit = performMeleeHitScan(weaponConfig);
+    const direction = resolveMeleeAttackDirection();
+    const hit = performMeleeHitScan(weaponConfig, direction);
+    const wireman = getWireman?.();
+    const wiremanHit = wireman?.raycastCapsule?.({
+      origin: camera.position,
+      direction,
+      maxDistance: weaponConfig.range,
+    });
+    const canHitWiremanFirst = Boolean(
+      wiremanHit && (!hit || wiremanHit.distance <= hit.distance + 0.0001),
+    );
+    if (canHitWiremanFirst) {
+      const damageResult = wireman.applyDamage?.(weaponConfig.damage || 0, selectedItem.id);
+      if (damageResult?.diedNow) {
+        setStatus(`${weaponConfig.displayName} killed wireman.`);
+      } else if (damageResult?.applied) {
+        setStatus(
+          `${weaponConfig.displayName} hit wireman for ${Math.round(
+            damageResult.damageApplied,
+          )}. (${Math.round(damageResult.health)}/${Math.round(damageResult.maxHealth)})`,
+        );
+      } else {
+        setStatus(`${weaponConfig.displayName} hit wireman.`);
+      }
+      return true;
+    }
+
     if (!hit) {
       setStatus(`${weaponConfig.displayName} missed.`);
       return true;
@@ -112,6 +155,36 @@ export function createMeleeSystem({
 
   function updateMeleeAttack(deltaSeconds) {
     meleeCooldownRemaining = Math.max(0, meleeCooldownRemaining - deltaSeconds);
+    if (meleeCooldownRemaining <= 0.0001) {
+      meleeCooldownDuration = 0;
+    }
+
+    const selectedItem = getSelectedInventoryItem();
+    const selectedWeaponConfig = getMeleeWeaponConfig(selectedItem?.id);
+    let meleeCooldownTargetOffsetY = 0;
+    if (
+      selectedWeaponConfig &&
+      !meleeSwingActive &&
+      meleeCooldownRemaining > 0 &&
+      meleeCooldownDuration > 0
+    ) {
+      const cooldownRatio = THREE.MathUtils.clamp(
+        meleeCooldownRemaining / Math.max(0.0001, meleeCooldownDuration),
+        0,
+        1,
+      );
+      const cooldownBlend = THREE.MathUtils.smoothstep(cooldownRatio, 0, 1);
+      meleeCooldownTargetOffsetY = -MELEE_COOLDOWN_IDLE_DROP_Y * cooldownBlend;
+    }
+    meleeCooldownVisualOffsetY = emaTowards(
+      meleeCooldownVisualOffsetY,
+      meleeCooldownTargetOffsetY,
+      deltaSeconds,
+      MELEE_COOLDOWN_OFFSET_HALF_LIFE_SECONDS,
+    );
+    if (selectedWeaponConfig) {
+      inventoryLeftHandRig.position.y += meleeCooldownVisualOffsetY;
+    }
 
     if (!meleeSwingActive) {
       return;

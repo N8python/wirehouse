@@ -23,6 +23,14 @@ export function createGameConstants({ THREE, cellSize, playerSpeed }) {
   const WIREMAN_FOLLOW_STOP_DISTANCE = 1.2;
   const WIREMAN_WAYPOINT_REACHED_DISTANCE = 0.3;
   const WIREMAN_TARGET_SEARCH_RADIUS_CELLS = 5;
+  const WIREMAN_COLLISION_RADIUS = 1.225;
+  const WIREMAN_CLOSE_DETECTION_DISTANCE = 10;
+  const WIREMAN_MAX_HEALTH = 360;
+  const WIREMAN_ATTACK_START_RANGE = 2;
+  const WIREMAN_ATTACK_RANGE = 4;
+  const WIREMAN_ATTACK_DAMAGE = 30;
+  const WIREMAN_ATTACK_COOLDOWN_SECONDS = 1.1;
+  const WIREMAN_PISTOL_DAMAGE = 90;
   const WIREMAN_ROTATE_SPEED = 9;
   const WIREMAN_VISUAL_YAW_OFFSET = 0;
   const PLAYER_TEST_DAMAGE_PER_PRESS = 5;
@@ -68,16 +76,18 @@ export function createGameConstants({ THREE, cellSize, playerSpeed }) {
   const MELEE_WEAPON_CONFIG = {
     "knife_01": {
       displayName: "Knife slash",
+      damage: 40,
       range: 2.2,
-      cooldownSeconds: 0.25,
+      cooldownSeconds: 1.25,
       swingDurationSeconds: 0.5,
       swingPositionOffset: [1.0, -0.3, 0.16],
       swingRotationOffset: [Math.PI / 2, -0.2, 0.3],
     },
     "baseball_bat_01": {
       displayName: "Bat swing",
+      damage: 72,
       range: 2.8,
-      cooldownSeconds: 0.2,
+      cooldownSeconds: 1.5,
       swingDurationSeconds: 0.4,
       swingPositionOffset: [0.5, -0.1, -0.1],
       swingRotationOffset: [-2, 1.2, 0],
@@ -191,6 +201,14 @@ export function createGameConstants({ THREE, cellSize, playerSpeed }) {
     WIREMAN_FOLLOW_STOP_DISTANCE,
     WIREMAN_WAYPOINT_REACHED_DISTANCE,
     WIREMAN_TARGET_SEARCH_RADIUS_CELLS,
+    WIREMAN_COLLISION_RADIUS,
+    WIREMAN_CLOSE_DETECTION_DISTANCE,
+    WIREMAN_MAX_HEALTH,
+    WIREMAN_ATTACK_START_RANGE,
+    WIREMAN_ATTACK_RANGE,
+    WIREMAN_ATTACK_DAMAGE,
+    WIREMAN_ATTACK_COOLDOWN_SECONDS,
+    WIREMAN_PISTOL_DAMAGE,
     WIREMAN_ROTATE_SPEED,
     WIREMAN_VISUAL_YAW_OFFSET,
     PLAYER_TEST_DAMAGE_PER_PRESS,

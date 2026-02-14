@@ -15,7 +15,13 @@ import * as config from "../config.js";
 import { createTextureHelpers } from "../graphics/textures.js";
 import { inferWallHeightTexture, applyParallaxOcclusionToMaterial } from "../graphics/pom.js";
 import { loadFlashlightModel } from "../entities/flashlightModel.js";
-import { buildWallSurfaceGeometry, generateMaze, findFarthestOpenCell, findPath } from "../world/maze.js";
+import {
+  buildWallSurfaceGeometry,
+  buildWalkableVisibilityMap,
+  generateMaze,
+  findFarthestOpenCell,
+  findPath,
+} from "../world/maze.js";
 import { createWarehousePropScatter } from "../world/props.js";
 import { createPickupSystem } from "../world/pickups.js";
 import { createGameConstants } from "./constants.js";
@@ -70,7 +76,18 @@ export function createGameApp() {
   let previousAnimationTimeMs = 0;
   let frameAccumulatorMs = 0;
   let n8aoSplitDebug = false;
+  let wiremanMinimapVisible = false;
   let elapsed = 0;
+  let isGameOver = false;
+  let gameOverCameraElapsed = 0;
+  let gameOverCameraStartY = config.PLAYER_HEIGHT;
+
+  const GAME_OVER_CAMERA_DROP_DURATION_SECONDS = 0.9;
+  const GAME_OVER_CAMERA_TARGET_Y = Math.max(0.16, config.PLAYER_RADIUS * 0.45);
+  const GAME_OVER_CAMERA_TARGET_ROLL_RADIANS = Math.PI * 0.5;
+  const gameOverCameraStartQuaternion = new THREE.Quaternion();
+  const gameOverCameraTargetQuaternion = new THREE.Quaternion();
+  const gameOverCameraEuler = new THREE.Euler(0, 0, 0, "YXZ");
 
   const keyState = {
     forward: false,
@@ -78,11 +95,13 @@ export function createGameApp() {
     left: false,
     right: false,
     sprint: false,
+    jump: false,
   };
   const mazePerf = {
     renderedFrames: 0,
     startTimeMs: performance.now(),
   };
+  const wiremanMinimapCtx = dom.wiremanMinimap?.getContext("2d") || null;
   window.__mazePerf = mazePerf;
 
   const world = createWorldSystem({
@@ -104,6 +123,7 @@ export function createGameApp() {
     findFarthestOpenCell,
     findPath,
     buildWallSurfaceGeometry,
+    buildWalkableVisibilityMap,
   });
 
   function setStatus(text) {
@@ -111,10 +131,98 @@ export function createGameApp() {
   }
 
   function getFlags() {
-    return { hasWon, gameActive, isTopDownView };
+    return { hasWon, gameActive, isTopDownView, isGameOver };
+  }
+
+  function setOverlayMode(mode = "start") {
+    const deathMode = mode === "death";
+    if (dom.overlayTitle) {
+      dom.overlayTitle.textContent = deathMode ? "Game Over" : "Procedural Maze";
+    }
+    if (dom.overlaySubtitle) {
+      dom.overlaySubtitle.textContent = deathMode
+        ? "The Wireman killed you. Enter the maze to try again."
+        : "Explore a freshly generated maze in an abandoned warehouse.";
+    }
+    if (dom.overlayControls) {
+      dom.overlayControls.classList.toggle("hidden", deathMode);
+    }
+    if (dom.startButton) {
+      dom.startButton.textContent = deathMode ? "Try Again" : "Enter Maze";
+    }
+  }
+
+  function resetMovementInput() {
+    keyState.forward = false;
+    keyState.backward = false;
+    keyState.left = false;
+    keyState.right = false;
+    keyState.sprint = false;
+    keyState.jump = false;
+  }
+
+  function resetGameOverState() {
+    isGameOver = false;
+    gameOverCameraElapsed = 0;
+    if (dom.deathTint) {
+      dom.deathTint.classList.remove("active");
+    }
+    setOverlayMode("start");
+  }
+
+  function updateGameOverCameraFall(deltaSeconds) {
+    if (!isGameOver) {
+      return;
+    }
+    gameOverCameraElapsed = Math.min(
+      GAME_OVER_CAMERA_DROP_DURATION_SECONDS,
+      gameOverCameraElapsed + Math.max(0, Number(deltaSeconds) || 0),
+    );
+    const t = THREE.MathUtils.clamp(
+      gameOverCameraElapsed / Math.max(0.0001, GAME_OVER_CAMERA_DROP_DURATION_SECONDS),
+      0,
+      1,
+    );
+    const eased = 1 - Math.pow(1 - t, 3);
+    runtime.camera.position.y = THREE.MathUtils.lerp(
+      gameOverCameraStartY,
+      GAME_OVER_CAMERA_TARGET_Y,
+      eased,
+    );
+    runtime.camera.quaternion.copy(gameOverCameraStartQuaternion).slerp(gameOverCameraTargetQuaternion, eased);
+  }
+
+  function triggerGameOver() {
+    if (isGameOver) {
+      return;
+    }
+    isGameOver = true;
+    gameActive = false;
+    isTopDownView = false;
+    resetMovementInput();
+    health.cancelJerkyConsume();
+    gameOverCameraElapsed = 0;
+    gameOverCameraStartY = runtime.camera.position.y;
+    gameOverCameraStartQuaternion.copy(runtime.camera.quaternion);
+    gameOverCameraEuler.setFromQuaternion(gameOverCameraStartQuaternion, "YXZ");
+    gameOverCameraEuler.z += GAME_OVER_CAMERA_TARGET_ROLL_RADIANS;
+    gameOverCameraTargetQuaternion.setFromEuler(gameOverCameraEuler);
+    dom.crosshair.style.opacity = "0";
+    updateCrosshairCooldownIndicator();
+    if (dom.deathTint) {
+      dom.deathTint.classList.add("active");
+    }
+    setOverlayMode("death");
+    dom.overlay.classList.remove("hidden");
+    setStatus("You were killed by the Wireman.");
+    if (runtime.canUsePointerLock && runtime.controls.isLocked) {
+      suppressUnlockPause = true;
+      runtime.controls.unlock();
+    }
   }
 
   let inventory = null;
+  let wireman = null;
   const heldItemDisplay = createHeldItemDisplaySystem({
     THREE,
     constants,
@@ -151,6 +259,7 @@ export function createGameApp() {
     pistolMuzzleFlashSprite: runtime.pistolMuzzleFlashSprite,
     pistolMuzzleFlashLight: runtime.pistolMuzzleFlashLight,
     pistolHitDebugMarker: runtime.pistolHitDebugMarker,
+    getWireman: () => wireman,
   });
   inventory = createInventorySystem({
     THREE,
@@ -191,6 +300,7 @@ export function createGameApp() {
     pickupSystem: runtime.pickupSystem,
     inventoryLeftHandRig: runtime.inventoryLeftHandRig,
     getSelectedInventoryItem: inventory.getSelectedInventoryItem,
+    getWireman: () => wireman,
     setStatus,
   });
   const playerView = createPlayerViewSystem({
@@ -226,7 +336,7 @@ export function createGameApp() {
       flashlightEnabled && !inventory.isFlashlightSuppressedByTwoHandedBat(),
     setStatus,
   });
-  const wireman = createWiremanSystem({
+  wireman = createWiremanSystem({
     THREE,
     GLTFLoader,
     scene: runtime.scene,
@@ -234,17 +344,193 @@ export function createGameApp() {
     world,
     config,
     constants,
+    applyPlayerDamage: health.applyPlayerDamage,
   });
+
+  function lerpColorChannel(from, to, t) {
+    return Math.round(from + (to - from) * t);
+  }
+
+  function getWiremanMinimapScoreColor(score, maxScore) {
+    const normalized = THREE.MathUtils.clamp(maxScore > 0 ? score / maxScore : 0, 0, 1);
+    const colorStops = [
+      [8, 18, 28],
+      [19, 66, 72],
+      [58, 124, 86],
+      [168, 184, 90],
+      [246, 223, 119],
+    ];
+    const scaled = normalized * (colorStops.length - 1);
+    const lowerIndex = Math.floor(scaled);
+    const upperIndex = Math.min(colorStops.length - 1, lowerIndex + 1);
+    const t = scaled - lowerIndex;
+    const from = colorStops[lowerIndex];
+    const to = colorStops[upperIndex];
+    const r = lerpColorChannel(from[0], to[0], t);
+    const g = lerpColorChannel(from[1], to[1], t);
+    const b = lerpColorChannel(from[2], to[2], t);
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+
+  function renderWiremanMinimap() {
+    if (!dom.wiremanMinimap || !wiremanMinimapCtx) {
+      return;
+    }
+    dom.wiremanMinimap.classList.toggle("visible", wiremanMinimapVisible);
+    if (!wiremanMinimapVisible) {
+      return;
+    }
+
+    const ctx = wiremanMinimapCtx;
+    const maze = world.getMaze();
+    const rows = maze.length;
+    const cols = maze[0]?.length || 0;
+    const width = dom.wiremanMinimap.width;
+    const height = dom.wiremanMinimap.height;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#050d16";
+    ctx.fillRect(0, 0, width, height);
+
+    if (!rows || !cols) {
+      return;
+    }
+
+    const wiremanState = wireman.getState();
+    const playerCell = world.worldToCell(runtime.camera.position.x, runtime.camera.position.z);
+    const scoreMax = wireman.getHuntScoreMax?.() || 0.1;
+    const pathCells = wireman.getPathCells?.() || [];
+    const pathIndex = wireman.getPathIndex?.() || 0;
+    const headerHeight = 22;
+    const padding = 8;
+    const gridSize = Math.min(width - padding * 2, height - padding * 2 - headerHeight);
+    const cellSize = gridSize / Math.max(cols, rows, 1);
+    const gridWidth = cols * cellSize;
+    const gridHeight = rows * cellSize;
+    const originX = (width - gridWidth) * 0.5;
+    const originY = headerHeight + (height - headerHeight - gridHeight) * 0.5;
+
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const x = originX + col * cellSize;
+        const y = originY + row * cellSize;
+        if (maze[row][col] === 1) {
+          ctx.fillStyle = "#6f7882";
+        } else {
+          const score = wireman.getHuntScoreForCell?.(col, row) ?? scoreMax;
+          ctx.fillStyle = getWiremanMinimapScoreColor(score, scoreMax);
+        }
+        ctx.fillRect(x, y, cellSize, cellSize);
+      }
+    }
+
+    if (cellSize >= 8) {
+      ctx.strokeStyle = "rgba(207, 224, 255, 0.1)";
+      ctx.lineWidth = 1;
+      for (let row = 0; row <= rows; row += 1) {
+        const y = originY + row * cellSize;
+        ctx.beginPath();
+        ctx.moveTo(originX, y);
+        ctx.lineTo(originX + gridWidth, y);
+        ctx.stroke();
+      }
+      for (let col = 0; col <= cols; col += 1) {
+        const x = originX + col * cellSize;
+        ctx.beginPath();
+        ctx.moveTo(x, originY);
+        ctx.lineTo(x, originY + gridHeight);
+        ctx.stroke();
+      }
+    }
+
+    if (pathCells.length > 1) {
+      const startIndex = Math.min(Math.max(pathIndex, 0), pathCells.length - 1);
+      ctx.strokeStyle = "rgba(255, 118, 222, 0.96)";
+      ctx.lineWidth = Math.max(1.6, cellSize * 0.24);
+      ctx.beginPath();
+      for (let i = startIndex; i < pathCells.length; i += 1) {
+        const pathCell = pathCells[i];
+        const cx = originX + (pathCell.col + 0.5) * cellSize;
+        const cy = originY + (pathCell.row + 0.5) * cellSize;
+        if (i === startIndex) {
+          ctx.moveTo(cx, cy);
+        } else {
+          ctx.lineTo(cx, cy);
+        }
+      }
+      ctx.stroke();
+    }
+
+    const drawPoint = (cell, color, radiusScale = 0.34) => {
+      if (!cell) {
+        return;
+      }
+      const cx = originX + (cell.col + 0.5) * cellSize;
+      const cy = originY + (cell.row + 0.5) * cellSize;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.max(2.5, cellSize * radiusScale), 0, Math.PI * 2);
+      ctx.fill();
+    };
+    const drawCellOutline = (cell, color, sizeScale = 0.86) => {
+      if (!cell) {
+        return;
+      }
+      const inset = (1 - sizeScale) * 0.5 * cellSize;
+      const x = originX + cell.col * cellSize + inset;
+      const y = originY + cell.row * cellSize + inset;
+      const size = cellSize * sizeScale;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1.2, cellSize * 0.12);
+      ctx.strokeRect(x, y, size, size);
+    };
+
+    drawCellOutline(wiremanState?.goalCell, "#ff67d9");
+    drawCellOutline(wiremanState?.huntTargetCell, "#ffa14f", 0.72);
+    drawCellOutline(wiremanState?.searchTargetCell, "#9dd2ff", 0.62);
+
+    if (wiremanState?.cell) {
+      const focusCell =
+        wiremanState.lineOfSightToPlayer
+          ? playerCell
+          : pathCells[Math.min(Math.max(pathIndex, 0), Math.max(pathCells.length - 1, 0))] ||
+            wiremanState.searchTargetCell ||
+            wiremanState.huntTargetCell ||
+            wiremanState.goalCell ||
+            null;
+      if (focusCell) {
+        const fromX = originX + (wiremanState.cell.col + 0.5) * cellSize;
+        const fromY = originY + (wiremanState.cell.row + 0.5) * cellSize;
+        const toX = originX + (focusCell.col + 0.5) * cellSize;
+        const toY = originY + (focusCell.row + 0.5) * cellSize;
+        ctx.strokeStyle = wiremanState.lineOfSightToPlayer ? "#ff6262" : "#ffdd8f";
+        ctx.lineWidth = Math.max(1, cellSize * 0.12);
+        ctx.beginPath();
+        ctx.moveTo(fromX, fromY);
+        ctx.lineTo(toX, toY);
+        ctx.stroke();
+      }
+    }
+
+    drawPoint(playerCell, "#59d0ff", 0.3);
+    drawPoint(wiremanState?.cell || null, "#ff6565");
+
+    ctx.strokeStyle = "rgba(196, 216, 241, 0.45)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(originX - 0.5, originY - 0.5, gridWidth + 1, gridHeight + 1);
+
+    ctx.fillStyle = "#e3eefc";
+    ctx.font = "11px monospace";
+    ctx.textBaseline = "top";
+    const huntModeLabel = (wiremanState?.huntMode || "hunt").toUpperCase();
+    ctx.fillText(`WIREMAN ${huntModeLabel}  (H)`, 9, 7);
+  }
 
   function regenerateMaze({ silent = false } = {}) {
     hasWon = false;
     gameActive = false;
     isTopDownView = false;
-    keyState.forward = false;
-    keyState.backward = false;
-    keyState.left = false;
-    keyState.right = false;
-    keyState.sprint = false;
+    resetMovementInput();
+    resetGameOverState();
     playerView.resetPose();
     health.reset();
     melee.reset();
@@ -255,6 +541,55 @@ export function createGameApp() {
     if (!silent) {
       setStatus("New maze generated.");
     }
+  }
+
+  function updateCrosshairCooldownIndicator() {
+    if (!dom.crosshairCooldown || !dom.crosshairCooldownFill) {
+      return;
+    }
+
+    let visible = false;
+    let progress = 0;
+    if (gameActive && !hasWon && !isTopDownView) {
+      const selectedItem = inventory.getSelectedInventoryItem();
+      const selectedItemId = selectedItem?.id || "";
+
+      if (selectedItemId === constants.PISTOL_ITEM_ID) {
+        const pistolState = pistol.getState?.() || null;
+        const cooldownRemaining = Math.max(0, pistolState?.pistolFireCooldownRemaining || 0);
+        if (cooldownRemaining > 0) {
+          visible = true;
+          progress =
+            1 -
+            THREE.MathUtils.clamp(
+              cooldownRemaining / Math.max(0.0001, constants.PISTOL_FIRE_COOLDOWN_SECONDS),
+              0,
+              1,
+            );
+        }
+      } else {
+        const meleeWeaponConfig = melee.getMeleeWeaponConfig?.(selectedItemId) || null;
+        if (meleeWeaponConfig) {
+          const meleeState = melee.getState?.() || null;
+          const cooldownRemaining = Math.max(0, meleeState?.meleeCooldownRemaining || 0);
+          if (cooldownRemaining > 0) {
+            visible = true;
+            progress =
+              1 -
+              THREE.MathUtils.clamp(
+                cooldownRemaining / Math.max(0.0001, meleeWeaponConfig.cooldownSeconds),
+                0,
+                1,
+              );
+          }
+        }
+      }
+    }
+
+    dom.crosshairCooldown.classList.toggle("active", visible);
+    dom.crosshairCooldownFill.style.width = `${Math.round(
+      THREE.MathUtils.clamp(progress, 0, 1) * 100,
+    )}%`;
   }
 
   function render() {
@@ -280,6 +615,7 @@ export function createGameApp() {
       runtime.topDownPlayerMarker.visible = false;
       runtime.topDownLookLine.visible = false;
       runtime.scene.fog = runtime.mazeFog;
+      renderWiremanMinimap();
       return;
     }
     runtime.flashlightModelAnchor.visible = flashlightModelVisibleInFirstPerson;
@@ -289,6 +625,7 @@ export function createGameApp() {
     runtime.topDownLookLine.visible = false;
     runtime.scene.fog = runtime.mazeFog;
     runtime.composer.render();
+    renderWiremanMinimap();
   }
 
   function update(deltaSeconds) {
@@ -310,24 +647,45 @@ export function createGameApp() {
       world.getExitMarker().rotation.y += deltaSeconds * 1.6;
       world.getExitMarker().position.y = 1.2 + Math.sin(elapsed * 2.8) * 0.12;
     }
-    playerView.updatePlayerMovement(deltaSeconds, {
-      gameActive,
-      keyState,
-      isSprintActive: sprintActive,
-      getPlayerSpeedMultiplier: health.getPlayerSpeedMultiplier,
-    });
-    playerView.updateViewBobbing(deltaSeconds, {
-      gameActive,
-      hasWon,
-      isTopDownView,
-      isSprintActive: sprintActive,
-    });
+    if (!isGameOver) {
+      playerView.updatePlayerMovement(deltaSeconds, {
+        gameActive,
+        hasWon,
+        keyState,
+        isSprintActive: sprintActive,
+        getPlayerSpeedMultiplier: health.getPlayerSpeedMultiplier,
+      });
+      playerView.updateViewBobbing(deltaSeconds, {
+        gameActive,
+        hasWon,
+        isTopDownView,
+        isSprintActive: sprintActive,
+      });
+    }
     wireman.update(deltaSeconds, { gameActive, hasWon, isTopDownView });
+    if (!isGameOver && gameActive && !hasWon && health.getState().playerHealth <= 0) {
+      triggerGameOver();
+    }
+    if (!isGameOver && gameActive && !hasWon && !isTopDownView) {
+      const jumpState = playerView.getJumpState?.() || null;
+      const resolvedPlayerCollision = wireman.resolvePlayerCapsuleCollision?.({
+        playerX: runtime.camera.position.x,
+        playerZ: runtime.camera.position.z,
+        playerRadius: config.PLAYER_RADIUS,
+        playerHeightOffset: jumpState?.jumpOffset || 0,
+      });
+      if (resolvedPlayerCollision) {
+        runtime.camera.position.x = resolvedPlayerCollision.x;
+        runtime.camera.position.z = resolvedPlayerCollision.z;
+      }
+    }
     melee.updateMeleeAttack(deltaSeconds);
     health.updateConsumableUseVisuals(elapsed);
     pistol.update(deltaSeconds, { gameActive, isTopDownView });
     pistol.updatePistolPropDebugMarker(deltaSeconds, elapsed);
     inventory.updatePickupPrompt();
+    updateGameOverCameraFall(deltaSeconds);
+    updateCrosshairCooldownIndicator();
   }
 
   function animationFrame(timeMs = performance.now()) {
@@ -350,11 +708,13 @@ export function createGameApp() {
   }
 
   function activateGameplay() {
+    resetGameOverState();
     gameActive = true;
     isTopDownView = false;
     health.cancelJerkyConsume();
     dom.overlay.classList.add("hidden");
     dom.crosshair.style.opacity = "1";
+    updateCrosshairCooldownIndicator();
     setStatus(config.GAMEPLAY_HINT);
     if (runtime.canUsePointerLock && !runtime.controls.isLocked) {
       runtime.controls.lock();
@@ -375,13 +735,14 @@ export function createGameApp() {
   }
 
   function toggleTopDownView() {
-    if (!gameActive || hasWon) {
+    if (!gameActive || hasWon || isGameOver) {
       return;
     }
 
     if (isTopDownView) {
       isTopDownView = false;
       dom.crosshair.style.opacity = "1";
+      updateCrosshairCooldownIndicator();
       setStatus("First-person view. Press V for top-down view.");
       if (runtime.canUsePointerLock && !runtime.controls.isLocked) {
         runtime.controls.lock();
@@ -391,6 +752,7 @@ export function createGameApp() {
 
     isTopDownView = true;
     dom.crosshair.style.opacity = "0";
+    updateCrosshairCooldownIndicator();
     setStatus("Top-down view. Press V to return to first-person.");
     if (runtime.canUsePointerLock && runtime.controls.isLocked) {
       suppressUnlockPause = true;
@@ -406,6 +768,18 @@ export function createGameApp() {
       n8aoSplitDebug
         ? "N8AO split debug view on. Press O to return to combined view."
         : "N8AO split debug view off. Press O to enable.",
+    );
+  }
+
+  function toggleWiremanMinimap() {
+    wiremanMinimapVisible = !wiremanMinimapVisible;
+    if (!wiremanMinimapVisible && dom.wiremanMinimap) {
+      dom.wiremanMinimap.classList.remove("visible");
+    }
+    setStatus(
+      wiremanMinimapVisible
+        ? "Wireman debug minimap on. Press H to hide."
+        : "Wireman debug minimap off. Press H to show.",
     );
   }
 
@@ -435,10 +809,12 @@ export function createGameApp() {
     if (code === "KeyS") keyState.backward = true;
     if (code === "KeyA") keyState.left = true;
     if (code === "KeyD") keyState.right = true;
+    if (code === "Space") keyState.jump = true;
     if (code === "ShiftLeft" || code === "ShiftRight") keyState.sprint = true;
     if (code === "KeyF") void toggleFullscreen();
     if (code === "KeyL") toggleFlashlight();
     if (code === "KeyV") toggleTopDownView();
+    if (code === "KeyH") toggleWiremanMinimap();
     if (code === "Slash") teleportPlayerToWireman();
     if (code === "KeyO") toggleN8AODebugView();
     if (code === "KeyN") regenerateMaze();
@@ -465,12 +841,13 @@ export function createGameApp() {
     if (code === "KeyS") keyState.backward = false;
     if (code === "KeyA") keyState.left = false;
     if (code === "KeyD") keyState.right = false;
+    if (code === "Space") keyState.jump = false;
     if (code === "ShiftLeft" || code === "ShiftRight") keyState.sprint = false;
   }
 
   function onPointerDown(event) {
     if (event.button !== 0) return;
-    if (!gameActive || hasWon || isTopDownView) return;
+    if (!gameActive || hasWon || isTopDownView || isGameOver) return;
     if (runtime.canUsePointerLock && !runtime.controls.isLocked) return;
     if (health.tryStartJerkyConsume()) return;
     if (pistol.tryShootPistol()) return;
@@ -529,17 +906,21 @@ export function createGameApp() {
     flashlightState: runtime.flashlightState,
     isFlashlightEmissionActive: () => flashlightEnabled && !inventory.isFlashlightSuppressedByTwoHandedBat(),
     isFlashlightSuppressedByTwoHandedBat: inventory.isFlashlightSuppressedByTwoHandedBat,
+    getPlayerJumpState: playerView.getJumpState,
   });
 
   function setupInteractions() {
     dom.startButton.addEventListener("click", () => {
-      if (hasWon) {
+      if (hasWon || isGameOver) {
         regenerateMaze();
       }
       activateGameplay();
     });
     runtime.renderer.domElement.addEventListener("click", () => {
       if (!gameActive) {
+        if (isGameOver) {
+          return;
+        }
         activateGameplay();
       } else if (runtime.canUsePointerLock && !runtime.controls.isLocked) {
         runtime.controls.lock();
@@ -550,6 +931,11 @@ export function createGameApp() {
     runtime.renderer.domElement.addEventListener("pointercancel", onPointerUp);
 
     runtime.controls.addEventListener("lock", () => {
+      if (isGameOver) {
+        dom.overlay.classList.remove("hidden");
+        dom.crosshair.style.opacity = "0";
+        return;
+      }
       isTopDownView = false;
       dom.overlay.classList.add("hidden");
       dom.crosshair.style.opacity = "1";
@@ -561,6 +947,12 @@ export function createGameApp() {
       health.cancelJerkyConsume();
       if (suppressUnlockPause) {
         suppressUnlockPause = false;
+        return;
+      }
+      if (isGameOver) {
+        isTopDownView = false;
+        dom.crosshair.style.opacity = "0";
+        dom.overlay.classList.remove("hidden");
         return;
       }
       if (runtime.canUsePointerLock) {
@@ -585,6 +977,8 @@ export function createGameApp() {
       update,
       render,
       renderGameToText,
+      world,
+      wireman,
       inventory,
       pistol,
       health,
@@ -593,6 +987,7 @@ export function createGameApp() {
   }
 
   world.createFloorAndCeiling();
+  setOverlayMode("start");
   regenerateMaze({ silent: true });
   setupInteractions();
   inventory.initInventoryRadial();

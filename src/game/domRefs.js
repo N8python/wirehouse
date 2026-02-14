@@ -1,10 +1,17 @@
 export function getDomRefs() {
   return {
     app: document.querySelector("#app"),
+    deathTint: document.querySelector("#death-tint"),
     overlay: document.querySelector("#overlay"),
+    overlayTitle: document.querySelector("#overlay-title"),
+    overlaySubtitle: document.querySelector("#overlay-subtitle"),
+    overlayControls: document.querySelector("#overlay-controls"),
     startButton: document.querySelector("#start-btn"),
     status: document.querySelector("#status"),
+    wiremanMinimap: document.querySelector("#wireman-minimap"),
     crosshair: document.querySelector("#crosshair"),
+    crosshairCooldown: document.querySelector("#crosshair-cooldown"),
+    crosshairCooldownFill: document.querySelector("#crosshair-cooldown-fill"),
     inventoryRadial: document.querySelector("#inventory-radial"),
     inventoryCount: document.querySelector("#inventory-count"),
     interactionHint: document.querySelector("#interaction-hint"),

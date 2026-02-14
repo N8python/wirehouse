@@ -686,3 +686,163 @@ Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedu
     - Added state flags: `sprinting` and `lineOfSightToPlayer`.
   - Updated `src/game/renderGameToText.js` to expose Wireman `sprinting` and `lineOfSightToPlayer` telemetry.
 - Skipped Playwright validation for this iteration.
+- Replaced Wireman’s fallback “A* directly to player cell” behavior with weighted hunt logic modeled after minotaur-style search:
+  - Added `hunt` vs `chase` mode in `src/game/systems/wiremanSystem.js`.
+  - Wireman now keeps per-cell hunt scores seeded by visibility richness (how many cells each tile can see).
+  - While hunting, it ranks top-score tiles, computes path cost to each candidate, and roulette-selects a target using cubic weighting: `(score / pathLength)^3`.
+  - As Wireman moves, it clears scores for tiles visible in its forward hemisphere from the current cell (searches/"checks" those spaces).
+  - If it reacquires LOS, it switches to `chase` mode and directly pursues the player as before.
+- Implemented maze visibility precomputation and world API plumbing:
+  - Added `buildWalkableVisibilityMap(...)` in `src/world/maze.js`.
+  - Visibility map stores, for every walkable tile, the set/list of walkable tiles mutually visible via static line-of-sight sampling.
+  - `src/game/systems/worldSystem.js` now rebuilds this map on maze regeneration and exposes:
+    - `getVisibilityMap()`
+    - `getVisibleCellsForCell(col, row)`
+    - `areCellsVisible(fromCol, fromRow, toCol, toRow)`
+  - `src/game/app.js` now passes `buildWalkableVisibilityMap` into the world system.
+- Added Wireman hunt telemetry for deterministic validation:
+  - `src/game/renderGameToText.js` now includes `wireman.huntMode` and `wireman.huntTargetCell`.
+- Validation:
+  - develop-web-game skill client run:
+    - `output/wireman-hunt-validation/shot-0.png`, `shot-1.png`, `shot-2.png`
+    - `output/wireman-hunt-validation/state-0.json`, `state-1.json`, `state-2.json`
+    - note: this run remained on the start overlay (`mode: paused`) because the scripted start click did not engage gameplay in that run.
+  - Focused deterministic Playwright run (forced start click + stepped simulation):
+    - `output/wireman-hunt-manual/shot.png`
+    - `output/wireman-hunt-manual/state.json`
+    - confirmed `wireman.huntMode="hunt"`, `moving=true`, `pathLength>0`, and active hunt target selection.
+  - Chase-mode check (teleport to Wireman and step):
+    - `output/wireman-hunt-chase-check/shot.png`
+    - `output/wireman-hunt-chase-check/state.json`
+    - confirmed `wireman.huntMode="chase"`, `lineOfSightToPlayer=true`, `goalCell==wireman.cell`, and zero separation after teleport.
+  - No console/page error artifact files were produced in the focused manual/chase runs.
+- Ported minotaur-style timestep score regeneration into Wireman hunt logic:
+  - `src/game/systems/wiremanSystem.js` now keeps per-walkable-cell hunt scores initialized to `0.1` (matching minotaur maze cell-score max).
+  - Added per-frame regeneration in Wireman update: `score += 0.00025 * deltaSeconds`, clamped to `0.1`.
+  - Visible-forward cells are still set to `0` when Wireman scans/moves through a cell.
+- Aligned target selection more closely with minotaur behavior:
+  - Hunt candidate score is now computed as the sum of current scores of all cells visible from that candidate tile (same visibility-sum concept as `findTopVisibilityTiles` in theMinotaur).
+  - Wireman picks from top candidates using roulette with cubic weighting `(visibilityScore / pathLength)^3`.
+- Validation for this follow-up:
+  - develop-web-game skill client run:
+    - `output/wireman-hunt-decay-skill/shot-0.png`, `shot-1.png`
+    - `output/wireman-hunt-decay-skill/state-0.json`, `state-1.json`
+    - no `errors-*.json` emitted (this run remained paused on overlay).
+  - Focused deterministic run (forced start + stepped sim):
+    - `output/wireman-hunt-decay-manual/shot.png`
+    - `output/wireman-hunt-decay-manual/state.json`
+    - confirmed active hunt mode/pathing (`huntMode="hunt"`, `moving=true`, `pathLength>0`).
+  - Chase-mode regression check:
+    - `output/wireman-hunt-decay-chase-check/shot.png`
+    - `output/wireman-hunt-decay-chase-check/state.json`
+    - confirmed LOS chase still works (`huntMode="chase"`, `lineOfSightToPlayer=true`) after teleport.
+- Added Wireman debug minimap overlay (Canvas2D) for AI introspection:
+  - New top-left canvas in `index.html` (`#wireman-minimap`) with show/hide styling and control hint updated to include `H`.
+  - Added DOM binding in `src/game/domRefs.js`.
+  - `src/game/app.js` now renders a per-frame minimap when toggled:
+    - maze walls/open cells,
+    - hunt score heatmap (cell scores used by Wireman selection logic),
+    - active path polyline,
+    - player and Wireman markers,
+    - goal/hunt target outlines,
+    - chase/hunt mode header.
+  - Added keybind: `H` toggles minimap visibility with status text.
+- Exposed Wireman debug accessors for minimap rendering in `src/game/systems/wiremanSystem.js`:
+  - `getHuntScoreForCell(col, row)`
+  - `getPathCells()`
+  - `getPathIndex()`
+  - `getHuntScoreMax()`
+- Validation:
+  - develop-web-game skill client run:
+    - `output/wireman-minimap-skill/shot-0.png`, `shot-1.png`
+    - `output/wireman-minimap-skill/state-0.json`, `state-1.json`
+    - no `errors-*.json` emitted (this run remained paused on the start overlay).
+  - Focused deterministic minimap test (forced start + press `H`):
+    - `output/wireman-minimap-manual/shot.png`
+    - `output/wireman-minimap-manual/state.json`
+    - `output/wireman-minimap-manual/minimap.json` confirms `display="block"` and `.visible` class after toggle.
+  - Follow-up readability pass for path contrast:
+    - `output/wireman-minimap-manual-v2/shot.png`
+    - path line now high-contrast magenta over score heatmap.
+- Wireman locomotion now uses `world.resolveWorldCollision(nextX, nextZ)` before committing position, so enemy movement is blocked by wall BVH and prop BVH colliders (same capsule collision pathway used by player movement).
+- Wireman movement/animation state now derives from resolved displacement after collision (prevents movement state from reporting motion when fully blocked by geometry).
+- Validation note: skipped Playwright by explicit user request; pending manual in-game collision verification.
+- Added optional collider filtering to `world.resolveWorldCollision(x, z, options)` in `src/game/systems/worldSystem.js` (`includeWalls/includeProps`, both default true).
+- Updated Wireman movement resolution in `src/game/systems/wiremanSystem.js` to call `resolveWorldCollision(nextX, nextZ, { includeProps: false })`, so Wireman is blocked by walls but can pass through props.
+- Validation note: no Playwright run (per user preference); pending manual gameplay verification for anti-stuck behavior around props.
+- Added simple jump mechanic on `Space`:
+  - input state: `keyState.jump` tracked in `src/game/app.js` (`keydown`/`keyup`) and reset on maze regenerate.
+  - movement/view: `src/game/systems/playerViewSystem.js` now simulates jump with vertical velocity + gravity (`PLAYER_JUMP_VELOCITY=5.2`, `PLAYER_JUMP_GRAVITY=14.5`) and applies jump offset to camera height.
+  - jump is edge-triggered (press-to-jump while grounded) and resets when gameplay is inactive.
+- Added jump state observability to `render_game_to_text` via `createRenderGameToText` (`flags.jumping`, `flags.grounded`, `player.jumpOffset`, `player.jumpVelocity`).
+- Updated controls overlay in `index.html` to show `Jump: Space`.
+- Validation note: no Playwright run (user will test manually).
+- Jump/collision integration fix: jump now offsets the actual collision capsule height instead of only camera visuals.
+  - `world.resolveWorldCollision(...)` now accepts `heightOffset` and applies it to capsule segment endpoints.
+  - player movement now calls `resolveWorldCollision(nextX, nextZ, { heightOffset: jumpOffset })`.
+  - jump simulation moved to `updatePlayerMovement` so collision uses current-frame jump state.
+- Expected result: low props can be cleared while airborne if jump height exceeds obstacle height.
+- Set Wireman collision capsule radius to `1.225` world units via new constant `WIREMAN_COLLISION_RADIUS` in `src/game/constants.js`.
+- `world.resolveWorldCollision(...)` now supports per-call `collisionRadius` override (defaults to `PLAYER_RADIUS` when omitted).
+- Wireman now passes `collisionRadius: WIREMAN_COLLISION_RADIUS` and `includeProps: false` when resolving movement collision.
+- Updated Wireman LOS to require front hemisphere alignment before visibility checks.
+  - In `hasDirectLineOfSight(...)`, added facing-vector dot gate (`forwardDot < 0 => false`) using `wiremanRig.rotation.y`.
+  - This makes player detection LOS effectively 180 degrees in front, matching hunt-score front hemisphere behavior.
+- Wireman LOS now varies by mode and distance:
+  - `chase` mode: 360-degree LOS (no front-hemisphere gate).
+  - `hunt/search` mode: 180-degree front hemisphere LOS by default.
+  - close-range override: if player is within `WIREMAN_CLOSE_DETECTION_DISTANCE = 10`, Wireman can detect from any direction as long as geometric LOS is clear (not through walls).
+- Implemented via `hasDirectLineOfSight(..., { requireFrontHemisphere })` + mode/distance rule in update loop.
+- Search-mode target arrival behavior updated: Wireman now performs a full 360-degree in-place scan before giving up.
+  - On reaching search target (`distance <= WIREMAN_FOLLOW_STOP_DISTANCE`), it enters a scan state and rotates by `WIREMAN_ROTATE_SPEED * dt` until one full turn is completed.
+  - During scan, movement is paused (`idle` animation), and normal per-frame LOS checks continue; if player is spotted, it transitions to chase as usual.
+  - If scan completes without spotting player, it transitions from `search` back to `hunt`.
+- Added Wireman `attack` state behavior:
+  - enters `attack` when Wireman has LOS and is within `WIREMAN_ATTACK_RANGE = 2` world units.
+  - plays `attack` animation role while in range.
+  - applies `WIREMAN_ATTACK_DAMAGE = 30` via `health.applyPlayerDamage(...)`, with `WIREMAN_ATTACK_COOLDOWN_SECONDS = 1.1` between hits to avoid per-frame damage spam.
+- `createWiremanSystem` now accepts `applyPlayerDamage` callback; wired from app via `applyPlayerDamage: health.applyPlayerDamage`.
+- Health clamping remains handled by existing health system (`setPlayerHealth`), so player HP bottoms at 0 as requested.
+- Added player-wireman capsule collision resolution:
+  - `wireman.resolvePlayerCapsuleCollision(...)` now separates both entities when their capsules overlap, using `PLAYER_RADIUS` and `WIREMAN_COLLISION_RADIUS`.
+  - Separation respects jump offset by including a vertical-gap check so high jumps can reduce/avoid collision.
+  - Hooked into main update loop after `wireman.update(...)` to keep camera and wireman from interpenetrating.
+- Skipped Playwright validation in this iteration per user request.
+- Added Wireman combat health/death loop:
+  - New health constants: max health 360 and pistol damage 90.
+  - Melee weapon configs now include per-hit damage (`knife_01`: 40, `baseball_bat_01`: 60).
+  - `wiremanSystem` now tracks `health` and `dead`, exposes `getRaycastTarget`, `isHitObject`, and `applyDamage`.
+  - Added `death` animation role (loop once, clamp at end). On death, Wireman enters `huntMode: "dead"`, stops all AI/pathing/attacks, and remains in place.
+  - Player-vs-Wireman capsule collision is disabled once Wireman is dead.
+- Integrated weapon hits against Wireman:
+  - `meleeSystem` raycasts now include Wireman as a target and apply weapon-specific damage.
+  - `pistolSystem` raycasts now include Wireman by default and apply 90 damage on hit.
+  - Pistol hits on Wireman skip bullet-decal spawn.
+- Updated app wiring to pass a `getWireman` callback into pistol/melee systems.
+- Added Wireman `health`, `maxHealth`, and `dead` fields to `renderGameToText` output.
+- Skipped Playwright validation in this iteration per user request.
+- Replaced Wireman combat hit detection from mesh ray intersection to capsule ray intersection:
+  - Added `wireman.raycastCapsule({ origin, direction, maxDistance })` using `THREE.Ray.distanceSqToSegment` against Wireman’s collision capsule.
+  - Melee now compares nearest world-ray hit vs capsule hit distance and only damages Wireman if capsule is the closest valid hit.
+  - Pistol now does the same nearest-hit arbitration; Wireman is no longer added to `Raycaster` object targets.
+- Added cooldown-rest visual dip for player weapons:
+  - Melee: when a melee weapon is selected, cooldown is active, and swing animation is not active, the held rig is shifted downward and smoothly rises as cooldown approaches zero.
+  - Pistol: when pistol cooldown is active and pistol is no longer in its active shot animation window (muzzle flash/recoil threshold), the held rig is shifted downward and rises as cooldown clears.
+- Refined cooldown dip implementation to be EMA-smoothed toward target Y-offset each frame (melee + pistol) to avoid abrupt vertical jumps when entering/exiting cooldown visuals.
+- Melee cooldown baseline now applies during swing animation too, so swing-return settles toward the cooldown-lowered target pose instead of base pose.
+- Melee cooldown offset is now gated to backswing (`swingProgress >= 0.5`) while preserving EMA smoothing, so initial forward swing target does not include cooldown dip.
+- Reverted melee cooldown target behavior: cooldown Y-offset is no longer targeted during any part of the swing animation (including backswing); EMA cooldown dip only applies once swing is inactive.
+- Added a compact crosshair cooldown bar UI under the crosshair:
+  - Appears only while selected weapon cooldown is active (pistol or melee).
+  - Fill progresses from 0% to 100% as cooldown recharges.
+  - Hidden outside active first-person gameplay states.
+- Added player death/game-over flow when health reaches zero during active gameplay:
+  - New `isGameOver` runtime flag in `src/game/app.js`.
+  - Wireman kill now triggers game-over state, unlocks pointer lock safely, shows a game-over overlay mode, and applies a red full-screen death tint.
+  - Implemented death camera animation: camera falls from current height toward floor and rolls +90 degrees around the Z axis over a short ease-out.
+  - Game-over restart flow uses the existing start button (`Try Again`) and regenerates the maze before re-entering.
+- UI additions for game-over presentation:
+  - Added `#death-tint` layer and overlay text hooks (`#overlay-title`, `#overlay-subtitle`, `#overlay-controls`) in `index.html`.
+  - Added corresponding DOM refs in `src/game/domRefs.js`.
+- Debug/state output update:
+  - `render_game_to_text` now reports `mode: "game_over"` and `flags.gameOver` when dead.

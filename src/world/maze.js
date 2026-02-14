@@ -174,6 +174,102 @@ export function generateMaze(cols, rows) {
   return grid;
 }
 
+function makeCellKey(col, row) {
+  return `${col},${row}`;
+}
+
+function areCellsMutuallyVisible(fromCell, toCell, isWalkableCell) {
+  if (fromCell.col === toCell.col && fromCell.row === toCell.row) {
+    return true;
+  }
+  if (!isWalkableCell(fromCell.col, fromCell.row) || !isWalkableCell(toCell.col, toCell.row)) {
+    return false;
+  }
+
+  const fromX = fromCell.col + 0.5;
+  const fromY = fromCell.row + 0.5;
+  const toX = toCell.col + 0.5;
+  const toY = toCell.row + 0.5;
+  const deltaX = toX - fromX;
+  const deltaY = toY - fromY;
+  const distance = Math.hypot(deltaX, deltaY);
+  if (distance <= 0.0001) {
+    return true;
+  }
+
+  // Quarter-cell samples keep diagonal corner peeks from leaking through walls.
+  const sampleCount = Math.max(1, Math.ceil(distance * 4));
+  for (let sampleIndex = 1; sampleIndex < sampleCount; sampleIndex += 1) {
+    const t = sampleIndex / sampleCount;
+    const sampleCol = Math.floor(fromX + deltaX * t);
+    const sampleRow = Math.floor(fromY + deltaY * t);
+    if (!isWalkableCell(sampleCol, sampleRow)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function buildWalkableVisibilityMap({
+  maze,
+  cols,
+  rows,
+  isWalkableCell: isWalkableCellInput,
+}) {
+  const isWalkableCell =
+    typeof isWalkableCellInput === "function"
+      ? isWalkableCellInput
+      : (col, row) =>
+          row >= 0 &&
+          row < rows &&
+          col >= 0 &&
+          col < cols &&
+          maze[row]?.[col] === 0;
+
+  const walkableCells = [];
+  const cellByKey = new Map();
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      if (!isWalkableCell(col, row)) {
+        continue;
+      }
+      const key = makeCellKey(col, row);
+      const cell = { col, row, key };
+      walkableCells.push(cell);
+      cellByKey.set(key, cell);
+    }
+  }
+
+  const visibleCellsByKey = new Map();
+  const visibleCellKeySetByKey = new Map();
+  for (const cell of walkableCells) {
+    visibleCellsByKey.set(cell.key, [cell]);
+    visibleCellKeySetByKey.set(cell.key, new Set([cell.key]));
+  }
+
+  for (let fromIndex = 0; fromIndex < walkableCells.length; fromIndex += 1) {
+    const fromCell = walkableCells[fromIndex];
+    for (let toIndex = fromIndex + 1; toIndex < walkableCells.length; toIndex += 1) {
+      const toCell = walkableCells[toIndex];
+      if (!areCellsMutuallyVisible(fromCell, toCell, isWalkableCell)) {
+        continue;
+      }
+
+      visibleCellsByKey.get(fromCell.key).push(toCell);
+      visibleCellKeySetByKey.get(fromCell.key).add(toCell.key);
+      visibleCellsByKey.get(toCell.key).push(fromCell);
+      visibleCellKeySetByKey.get(toCell.key).add(fromCell.key);
+    }
+  }
+
+  return {
+    walkableCells,
+    cellByKey,
+    visibleCellsByKey,
+    visibleCellKeySetByKey,
+  };
+}
+
 export function findFarthestOpenCell(fromCell, isWalkableCell) {
   const queue = [{ ...fromCell, distance: 0 }];
   const visited = new Set([`${fromCell.col},${fromCell.row}`]);

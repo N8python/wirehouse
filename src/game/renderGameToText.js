@@ -17,6 +17,7 @@ export function createRenderGameToText({
   flashlightState,
   isFlashlightEmissionActive,
   isFlashlightSuppressedByTwoHandedBat,
+  getPlayerJumpState,
 }) {
   const {
     PLAYER_MAX_HEALTH,
@@ -59,6 +60,7 @@ export function createRenderGameToText({
     const healthRatio = PLAYER_MAX_HEALTH > 0 ? healthState.playerHealth / PLAYER_MAX_HEALTH : 0;
     const staminaRatio = PLAYER_MAX_STAMINA > 0 ? healthState.playerStamina / PLAYER_MAX_STAMINA : 0;
     const wiremanState = wireman?.getState?.() || null;
+    const jumpState = getPlayerJumpState?.() || null;
     const lastPistolHitPayload = pistolState.lastPistolHitInfo
       ? {
           ...pistolState.lastPistolHitInfo,
@@ -67,7 +69,7 @@ export function createRenderGameToText({
       : null;
 
     return JSON.stringify({
-      mode: flags.hasWon ? "cleared" : flags.gameActive ? "playing" : "paused",
+      mode: flags.hasWon ? "cleared" : flags.isGameOver ? "game_over" : flags.gameActive ? "playing" : "paused",
       coordinateSystem:
         "Maze origin is at center of world. +x moves east (right), +z moves south (toward larger row), +y is up.",
       maze: {
@@ -85,16 +87,21 @@ export function createRenderGameToText({
         row: playerCell.row,
         yaw: round(rotation.y),
         pitch: round(rotation.x),
+        jumpOffset: round(jumpState?.jumpOffset || 0),
+        jumpVelocity: round(jumpState?.jumpVelocity || 0),
       },
       flags: {
         pointerLocked: controls.isLocked,
         won: flags.hasWon,
+        gameOver: Boolean(flags.isGameOver),
         gameActive: flags.gameActive,
         topDownView: flags.isTopDownView,
         flashlightOn: isFlashlightEmissionActive(),
         flashlightSuppressedByTwoHandedBat: isFlashlightSuppressedByTwoHandedBat(),
         flashlightModelLoaded: flashlightState.flashlightModelLoaded,
         sprinting: healthState.staminaSprintActive,
+        jumping: Boolean(jumpState?.jumping),
+        grounded: jumpState ? Boolean(jumpState.grounded) : true,
         meleeSwinging: meleeState.meleeSwingActive,
         meleeCooldownSeconds: round(meleeState.meleeCooldownRemaining),
         playerDead: healthState.playerHealth <= 0,
@@ -148,6 +155,7 @@ export function createRenderGameToText({
             sprinting: Boolean(wiremanState.sprinting),
             lineOfSightToPlayer: Boolean(wiremanState.lineOfSightToPlayer),
             animation: wiremanState.animation || null,
+            huntMode: wiremanState.huntMode || null,
             position: wiremanState.position
               ? {
                   x: round(wiremanState.position.x),
@@ -159,8 +167,13 @@ export function createRenderGameToText({
             pathLength: wiremanState.pathLength ?? 0,
             pathIndex: wiremanState.pathIndex ?? 0,
             goalCell: wiremanState.goalCell || null,
+            huntTargetCell: wiremanState.huntTargetCell || null,
+            searchTargetCell: wiremanState.searchTargetCell || null,
             distanceToPlayer: round(wiremanState.distanceToPlayer || 0),
             distanceToGoal: round(wiremanState.distanceToGoal || 0),
+            health: round(wiremanState.health || 0),
+            maxHealth: round(wiremanState.maxHealth || 0),
+            dead: Boolean(wiremanState.dead),
           }
         : null,
       inventory: inventory.getInventory().flatMap((item, index) =>

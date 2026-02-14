@@ -23,6 +23,8 @@ export function createPlayerViewSystem({
     LEFT_HAND_RIG_BASE_ROTATION,
   } = constants;
   const { PLAYER_HEIGHT, PLAYER_SPEED, SPRINT_MULTIPLIER } = config;
+  const PLAYER_JUMP_VELOCITY = 5.2;
+  const PLAYER_JUMP_GRAVITY = 14.5;
 
   const worldUp = new THREE.Vector3(0, 1, 0);
   const forward = new THREE.Vector3();
@@ -33,11 +35,17 @@ export function createPlayerViewSystem({
   let viewBobPhase = 0;
   let viewBobBlend = 0;
   let movementBobSignal = 0;
+  let jumpOffset = 0;
+  let jumpVelocity = 0;
+  let jumpPressedLastFrame = false;
 
   function resetPose() {
     viewBobPhase = 0;
     viewBobBlend = 0;
     movementBobSignal = 0;
+    jumpOffset = 0;
+    jumpVelocity = 0;
+    jumpPressedLastFrame = false;
     camera.position.y = PLAYER_HEIGHT;
     flashlightRig.position.copy(FLASHLIGHT_RIG_BASE_POSITION);
     flashlightRig.rotation.copy(FLASHLIGHT_RIG_BASE_ROTATION);
@@ -47,11 +55,14 @@ export function createPlayerViewSystem({
 
   function updatePlayerMovement(deltaSeconds, {
     gameActive,
+    hasWon,
     keyState,
     isSprintActive,
     getPlayerSpeedMultiplier,
   }) {
-    if (!gameActive) {
+    updateJump(deltaSeconds, { gameActive, hasWon, keyState });
+
+    if (!gameActive || hasWon) {
       movementBobSignal = 0;
       return;
     }
@@ -86,7 +97,7 @@ export function createPlayerViewSystem({
     const previousZ = current.z;
     const nextX = current.x + stepX;
     const nextZ = current.z + stepZ;
-    const resolvedFromWorld = world.resolveWorldCollision(nextX, nextZ);
+    const resolvedFromWorld = world.resolveWorldCollision(nextX, nextZ, { heightOffset: jumpOffset });
     current.x = resolvedFromWorld.x;
     current.z = resolvedFromWorld.z;
 
@@ -95,7 +106,42 @@ export function createPlayerViewSystem({
     movementBobSignal = THREE.MathUtils.clamp(movedDistance / maxDisplacement, 0, 1);
   }
 
-  function updateViewBobbing(deltaSeconds, { gameActive, hasWon, isTopDownView, isSprintActive }) {
+  function updateJump(deltaSeconds, { gameActive, hasWon, keyState }) {
+    const jumpAllowed = gameActive && !hasWon;
+    const jumpPressed = Boolean(keyState.jump);
+    const isGrounded = jumpOffset <= 0.0001;
+
+    if (jumpAllowed && jumpPressed && !jumpPressedLastFrame && isGrounded) {
+      jumpVelocity = PLAYER_JUMP_VELOCITY;
+    }
+    jumpPressedLastFrame = jumpPressed;
+
+    if (!jumpAllowed) {
+      jumpOffset = 0;
+      jumpVelocity = 0;
+      return;
+    }
+
+    if (isGrounded && jumpVelocity <= 0) {
+      jumpOffset = 0;
+      jumpVelocity = 0;
+      return;
+    }
+
+    jumpVelocity -= PLAYER_JUMP_GRAVITY * deltaSeconds;
+    jumpOffset += jumpVelocity * deltaSeconds;
+    if (jumpOffset <= 0) {
+      jumpOffset = 0;
+      jumpVelocity = 0;
+    }
+  }
+
+  function updateViewBobbing(deltaSeconds, {
+    gameActive,
+    hasWon,
+    isTopDownView,
+    isSprintActive,
+  }) {
     const bobAllowed = gameActive && !hasWon && !isTopDownView;
     if (!bobAllowed) {
       viewBobBlend = 0;
@@ -119,7 +165,7 @@ export function createPlayerViewSystem({
     const bobX = Math.cos(viewBobPhase) * amplitude * 0.45;
     const bobRoll = Math.sin(viewBobPhase) * amplitude * 0.22;
 
-    camera.position.y = PLAYER_HEIGHT + bobY;
+    camera.position.y = PLAYER_HEIGHT + jumpOffset + bobY;
     flashlightRig.position.set(
       FLASHLIGHT_RIG_BASE_POSITION.x + bobX,
       FLASHLIGHT_RIG_BASE_POSITION.y + bobY * 0.4,
@@ -185,5 +231,11 @@ export function createPlayerViewSystem({
     updateViewBobbing,
     updateTopDownCamera,
     updateTopDownPlayerDebug,
+    getJumpState: () => ({
+      jumping: jumpOffset > 0.0001 || jumpVelocity > 0,
+      grounded: jumpOffset <= 0.0001,
+      jumpOffset,
+      jumpVelocity,
+    }),
   };
 }

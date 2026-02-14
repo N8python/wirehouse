@@ -6,6 +6,8 @@ export function configureDebugApis({
   update,
   render,
   renderGameToText,
+  world,
+  wireman,
   inventory,
   pistol,
   health,
@@ -109,4 +111,32 @@ export function configureDebugApis({
     y: round(runtime.inventoryLeftHandItemAnchor.position.y),
     z: round(runtime.inventoryLeftHandItemAnchor.position.z),
   });
+  window.__debugGetWiremanState = () => wireman?.getState?.() || null;
+  window.__debugGetWalkableCells = () =>
+    (world.getVisibilityMap?.()?.walkableCells || []).map((cell) => ({
+      col: cell.col,
+      row: cell.row,
+      key: cell.key,
+    }));
+  window.__debugAreCellsVisible = (fromCol, fromRow, toCol, toRow) => {
+    if (typeof world.areCellsVisible !== "function") {
+      return null;
+    }
+    return world.areCellsVisible(
+      Number(fromCol),
+      Number(fromRow),
+      Number(toCol),
+      Number(toRow),
+    );
+  };
+  window.__debugTeleportPlayerToCell = (col, row) => {
+    const targetCol = Number(col);
+    const targetRow = Number(row);
+    if (!world.isWalkableCell(targetCol, targetRow)) {
+      return false;
+    }
+    const worldPosition = world.cellToWorld(targetCol, targetRow);
+    runtime.camera.position.set(worldPosition.x, constants.PLAYER_HEIGHT, worldPosition.z);
+    return true;
+  };
 }

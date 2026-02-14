@@ -39,6 +39,22 @@
         display: none;
       }
 
+      #death-tint {
+        position: fixed;
+        inset: 0;
+        z-index: 3;
+        pointer-events: none;
+        opacity: 0;
+        background:
+          radial-gradient(circle at 50% 65%, rgba(255, 88, 88, 0.34), rgba(92, 0, 0, 0.72)),
+          linear-gradient(180deg, rgba(70, 0, 0, 0.2), rgba(130, 0, 0, 0.5));
+        transition: opacity 0.7s ease-out;
+      }
+
+      #death-tint.active {
+        opacity: 1;
+      }
+
       .panel {
         width: min(520px, 92vw);
         padding: 1.6rem;
@@ -71,6 +87,10 @@
         font: inherit;
       }
 
+      #overlay-controls.hidden {
+        display: none;
+      }
+
       #status {
         position: fixed;
         top: 0.85rem;
@@ -79,6 +99,25 @@
         color: #f2f5ff;
         font-size: 0.9rem;
         text-shadow: 0 1px 4px #000;
+      }
+
+      #wireman-minimap {
+        position: fixed;
+        top: 2.35rem;
+        left: 0.9rem;
+        z-index: 4;
+        width: min(260px, 32vw);
+        height: min(260px, 32vw);
+        border: 1px solid #85a4bf66;
+        border-radius: 10px;
+        background: #081119c9;
+        box-shadow: 0 10px 22px #000a;
+        display: none;
+        pointer-events: none;
+      }
+
+      #wireman-minimap.visible {
+        display: block;
       }
 
       #buff-icons {
@@ -379,6 +418,35 @@
         left: 0;
         top: 10px;
       }
+
+      #crosshair-cooldown {
+        position: fixed;
+        top: calc(50% + 19px);
+        left: 50%;
+        transform: translateX(-50%);
+        width: 34px;
+        height: 5px;
+        border: 1px solid #afbdcc84;
+        border-radius: 999px;
+        background: #0a1118cc;
+        box-shadow: inset 0 1px 3px #000a;
+        overflow: hidden;
+        opacity: 0;
+        pointer-events: none;
+        z-index: 2;
+      }
+
+      #crosshair-cooldown.active {
+        opacity: 1;
+      }
+
+      #crosshair-cooldown-fill {
+        width: 0%;
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #7fd9ff, #e4f4ff);
+        box-shadow: 0 0 8px #8fd8ff66;
+      }
     </style>
     <script type="importmap">
       {
@@ -395,19 +463,22 @@
   <body>
     <div id="app"></div>
 
+    <div id="death-tint" aria-hidden="true"></div>
+
     <div id="overlay">
       <div class="panel">
-        <h1>Procedural Maze</h1>
-        <p>Explore a freshly generated maze in an abandoned warehouse.</p>
+        <h1 id="overlay-title">Procedural Maze</h1>
+        <p id="overlay-subtitle">Explore a freshly generated maze in an abandoned warehouse.</p>
         <p>Move: <strong>WASD</strong></p>
         <p>Inventory pivot: <strong>Left / Right Arrow</strong></p>
         <p>Look: <strong>Mouse</strong> (pointer lock)</p>
-        <p>Sprint: <strong>Shift</strong> | Flashlight: <strong>L</strong> | Pickup: <strong>E</strong> | Drop selected item: <strong>Q</strong> | Teleport to Wireman: <strong>/</strong> | Left Click: <strong>Melee/fire weapon or hold to consume selected item (jerky/first aid/soda)</strong> | Debug loadout + infinite pistol ammo: <strong>I</strong> | Pistol impact debug: <strong>P</strong> | Test damage: <strong>T</strong> | View: <strong>V</strong> | AO debug: <strong>O</strong> | Bounce debug: <strong>B</strong> | Fullscreen: <strong>F</strong> | New maze: <strong>N</strong></p>
+        <p id="overlay-controls">Sprint: <strong>Shift</strong> | Jump: <strong>Space</strong> | Flashlight: <strong>L</strong> | Pickup: <strong>E</strong> | Drop selected item: <strong>Q</strong> | Teleport to Wireman: <strong>/</strong> | Left Click: <strong>Melee/fire weapon or hold to consume selected item (jerky/first aid/soda)</strong> | Debug loadout + infinite pistol ammo: <strong>I</strong> | Pistol impact debug: <strong>P</strong> | Test damage: <strong>T</strong> | View: <strong>V</strong> | AO debug: <strong>O</strong> | Bounce debug: <strong>B</strong> | Debug minimap: <strong>H</strong> | Fullscreen: <strong>F</strong> | New maze: <strong>N</strong></p>
         <button id="start-btn" type="button">Enter Maze</button>
       </div>
     </div>
 
     <div id="status" aria-live="polite"></div>
+    <canvas id="wireman-minimap" width="260" height="260" aria-hidden="true"></canvas>
     <div id="buff-icons" aria-live="polite">
       <div id="regen-indicator" class="buff-indicator">
         <span class="buff-icon" aria-hidden="true">+</span>
@@ -450,6 +521,9 @@
       </div>
     </div>
     <div id="crosshair" aria-hidden="true"></div>
+    <div id="crosshair-cooldown" aria-hidden="true">
+      <div id="crosshair-cooldown-fill"></div>
+    </div>
 
     <script type="module" src="./main.js"></script>
   </body>

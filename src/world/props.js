@@ -2,7 +2,7 @@ import { computeAverageTextureAlbedo } from "../graphics/textures.js";
 import { MeshBVH, StaticGeometryGenerator } from "three-mesh-bvh";
 
 const PROP_LIBRARY = [
-  {
+  /*{
     id: "dumpster",
     path: "./assets/models/props/dumpster.glb",
     weight: 1.0,
@@ -57,7 +57,21 @@ const PROP_LIBRARY = [
     weight: 2.0,
     desiredSizeMin: 0.6,
     desiredSizeMax: 1.2,
+  },*/
+  {
+    id: "pallet",
+    path: "./assets/models/props/pallet.glb",
+    weight: 1.8,
+    desiredSizeMin: 1.3,
+    desiredSizeMax: 2.0,
   },
+  {
+    id: "package_box",
+    path: "./assets/models/props/package_box.glb",
+    weight: 2.0,
+    desiredSizeMin: 0.6,
+    desiredSizeMax: 1.2,
+  }
 ];
 
 function randomBetween(min, max) {

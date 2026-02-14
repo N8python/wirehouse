@@ -17,6 +17,7 @@ export function createWorldSystem({
   findFarthestOpenCell,
   findPath,
   buildWallSurfaceGeometry,
+  buildWalkableVisibilityMap,
 }) {
   const {
     MAZE_COLS,
@@ -35,6 +36,12 @@ export function createWorldSystem({
   let exitMarker = null;
   let startCell = { col: 1, row: 1 };
   let exitCell = { col: MAZE_COLS - 2, row: MAZE_ROWS - 2 };
+  let visibilityMap = {
+    walkableCells: [],
+    cellByKey: new Map(),
+    visibleCellsByKey: new Map(),
+    visibleCellKeySetByKey: new Map(),
+  };
 
   const worldCollisionCapsule = new THREE.Line3(new THREE.Vector3(), new THREE.Vector3());
   const worldCollisionBounds = new THREE.Box3();
@@ -143,6 +150,12 @@ export function createWorldSystem({
     maze = generateMaze(MAZE_COLS, MAZE_ROWS);
     startCell = { col: 1, row: 1 };
     exitCell = findFarthestOpenCell(startCell, isWalkableCell);
+    visibilityMap = buildWalkableVisibilityMap({
+      maze,
+      cols: MAZE_COLS,
+      rows: MAZE_ROWS,
+      isWalkableCell,
+    });
 
     rebuildWalls();
     void propScatter.regenerate({ maze, startCell, exitCell });
@@ -189,22 +202,31 @@ export function createWorldSystem({
     return true;
   }
 
-  function resolveWorldCollision(x, z) {
-    worldCollisionResolved.set(x, PLAYER_HEIGHT, z);
-    const radius = PLAYER_RADIUS;
-    const capsuleTopY = PLAYER_HEIGHT - radius;
-    const capsuleBottomY = radius;
-    const colliders = [wallMesh, propScatter.collider].filter(
-      (collider) => collider?.geometry?.boundsTree,
-    );
-    if (!colliders.length) {
+  function resolveWorldCollision(x, z, options = {}) {
+    const includeWalls = options.includeWalls !== false;
+    const includeProps = options.includeProps !== false;
+    const heightOffset = Math.max(0, Number(options.heightOffset) || 0);
+    const capsuleCenterY = PLAYER_HEIGHT + heightOffset;
+    worldCollisionResolved.set(x, capsuleCenterY, z);
+    const radius = Math.max(0.001, Number(options.collisionRadius) || PLAYER_RADIUS);
+    const capsuleTopY = capsuleCenterY - radius;
+    const capsuleBottomY = radius + heightOffset;
+    const colliders = [];
+    if (includeWalls) {
+      colliders.push(wallMesh);
+    }
+    if (includeProps) {
+      colliders.push(propScatter.collider);
+    }
+    const activeColliders = colliders.filter((collider) => collider?.geometry?.boundsTree);
+    if (!activeColliders.length) {
       return worldCollisionResolved;
     }
 
     for (let iteration = 0; iteration < 2; iteration++) {
       let moved = false;
 
-      for (const collider of colliders) {
+      for (const collider of activeColliders) {
         const boundsTree = collider.geometry.boundsTree;
         worldCollisionCapsule.start.set(
           worldCollisionResolved.x,
@@ -277,7 +299,7 @@ export function createWorldSystem({
       }
     }
 
-    worldCollisionResolved.y = PLAYER_HEIGHT;
+    worldCollisionResolved.y = capsuleCenterY;
     return worldCollisionResolved;
   }
 
@@ -295,6 +317,22 @@ export function createWorldSystem({
 
   function getWallMesh() {
     return wallMesh;
+  }
+
+  function getVisibilityMap() {
+    return visibilityMap;
+  }
+
+  function getVisibleCellsForCell(col, row) {
+    const key = `${col},${row}`;
+    return visibilityMap.visibleCellsByKey.get(key) || [];
+  }
+
+  function areCellsVisible(fromCol, fromRow, toCol, toRow) {
+    const sourceKey = `${fromCol},${fromRow}`;
+    const targetKey = `${toCol},${toRow}`;
+    const visibleSet = visibilityMap.visibleCellKeySetByKey.get(sourceKey);
+    return visibleSet ? visibleSet.has(targetKey) : false;
   }
 
   function getFloorMesh() {
@@ -323,6 +361,9 @@ export function createWorldSystem({
     getStartCell,
     getExitCell,
     getWallMesh,
+    getVisibilityMap,
+    getVisibleCellsForCell,
+    areCellsVisible,
     getFloorMesh,
     getRoofMesh,
     getExitMarker,
