@@ -935,3 +935,38 @@ Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedu
 - Locked player locomotion during consumable use (jerky, first aid kit, soda):
   - In `src/game/app.js`, update loop now processes consumable-use state before movement and swaps to an immobilized key-state when `health.getState().jerkyConsumeActive` is true.
   - Effect: no movement/sprint/jump translation, no sprint stamina drain, and no player footsteps while consuming.
+- Revamped start/game-over/victory overlay presentation for a stronger analog-horror tone:
+  - Updated `index.html` overlay visuals with mode-aware styling (`data-mode=start|death|win`), scanline/vignette treatment, revised panel/button styles, and clearer grouped controls.
+  - Renamed title screen and document title to **Wirehouse**.
+  - Updated `setOverlayMode` in `src/game/app.js` to set `dom.overlay.dataset.mode`, refreshed start/death/win copy, and changed start button label to `Enter Wirehouse`.
+- Start/title overlay copy cleanup:
+  - Removed debug-controls line from the title screen controls list.
+  - Removed the `Analog Horror Survival Maze` tagline and its related CSS selectors.
+- Hid status text HUD (`#status`) by setting `display: none` in `index.html` so top-left status messages are no longer shown.
+- Inventory HUD/input polish:
+  - Removed `#inventory-count` markup so the wheel center now shows only `Inventory`.
+  - Added inventory wheel rotation lockout tied to animation duration in `src/game/systems/inventorySystem.js`.
+  - `rotateInventoryWheel` now returns `false` while a rotate animation is still in progress, preventing repeated Left/Right key rotates until the current move completes.
+- Inventory rotation queueing:
+  - `rotateInventoryWheel` now enqueues requested pivot steps instead of dropping inputs while an animation is active.
+  - Added `consumeQueuedInventoryRotation` + `update()` in `src/game/systems/inventorySystem.js` to process one queued pivot each time the previous 160ms move animation completes.
+  - `app.js` now calls `inventory.update()` each frame so queued pivots execute automatically.
+  - Added `event.repeat` guard for Left/Right arrows so key-hold repeat does not flood the queue; discrete key presses queue as intended.
+- Added gradual result-screen fade-in (game over + victory):
+  - New overlay animation class in `index.html`: `#overlay.result-fade-in` with keyframes `overlay-result-fade-in`.
+  - `src/game/app.js` now uses `showOverlay({ fadeIn: true })` for `triggerGameOver()` and `triggerWin()`.
+  - Default fade duration set by `RESULT_OVERLAY_FADE_DURATION_SECONDS = 3`.
+  - Normal pause/start overlay show/hide uses helper methods without fade.
+- Added a global debug-key switch in `src/game/app.js`:
+  - `DEBUG_KEY_ENABLED = true`
+  - `DEBUG_KEY_CODES` set gates all debug hotkeys (H, /, O, N, I, U, B, P, T) in `onKeyDown`.
+- Added found-footage grain/static post effect:
+  - Added grain tuning constants in `src/game/constants.js`: `FOUND_FOOTAGE_GRAIN_INTENSITY` and `FOUND_FOOTAGE_GRAIN_STATIC_STRENGTH`.
+  - Added a custom full-screen `ShaderPass` after SMAA in `src/game/setupRuntime.js` (animated grain + occasional static band noise).
+  - Exposed pass as `runtime.foundFootageGrainPass` and update `time` uniform each frame from `app.js` to animate the effect.
+- Replaced shader hash PRNG with CPU-generated noise texture for found-footage grain:
+  - In `src/game/setupRuntime.js`, build a `THREE.DataTexture` from `Math.random()` values on startup.
+  - Grain/static shader now samples `noiseTex` uniform instead of computing hash noise in the fragment shader.
+- Updated found-footage grain PRNG approach per follow-up:
+  - Removed CPU noise texture path.
+  - Grain/static now generated fully in-shader using a higher-quality hash-without-sine PRNG (`prng(vec3)`), replacing the earlier weaker hash pattern.

@@ -13,7 +13,6 @@ export function getDomRefs() {
     crosshairCooldown: document.querySelector("#crosshair-cooldown"),
     crosshairCooldownFill: document.querySelector("#crosshair-cooldown-fill"),
     inventoryRadial: document.querySelector("#inventory-radial"),
-    inventoryCount: document.querySelector("#inventory-count"),
     interactionHint: document.querySelector("#interaction-hint"),
     healthRingFill: document.querySelector("#health-ring-fill"),
     healthRingLoss: document.querySelector("#health-ring-loss"),

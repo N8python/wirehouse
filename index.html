@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Wolfenstein-Style Procedural Maze</title>
+    <title>Wirehouse</title>
     <style>
       :root {
         color-scheme: dark;
@@ -31,12 +31,75 @@
         inset: 0;
         display: grid;
         place-items: center;
-        background: radial-gradient(circle at center, rgba(11, 14, 20, 0.7), rgba(4, 5, 8, 0.93));
+        overflow: hidden;
+        background:
+          radial-gradient(140% 110% at 50% -12%, rgba(78, 102, 130, 0.2), rgba(8, 8, 12, 0.96)),
+          linear-gradient(165deg, rgba(6, 10, 16, 0.94), rgba(10, 8, 12, 0.98));
         z-index: 4;
       }
 
       #overlay.hidden {
         display: none;
+      }
+
+      #overlay.result-fade-in {
+        animation: overlay-result-fade-in var(--overlay-fade-duration, 3s) ease forwards;
+      }
+
+      #overlay::before {
+        content: "";
+        position: absolute;
+        inset: -12%;
+        pointer-events: none;
+        opacity: 0.14;
+        background: repeating-linear-gradient(
+          0deg,
+          rgba(229, 236, 255, 0.32) 0px,
+          rgba(229, 236, 255, 0.32) 1px,
+          transparent 1px,
+          transparent 4px
+        );
+        animation: overlay-scan-shift 7s linear infinite;
+      }
+
+      #overlay::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at center, transparent 36%, rgba(0, 0, 0, 0.62) 100%),
+          radial-gradient(circle at 50% -20%, rgba(95, 133, 183, 0.14), transparent 64%);
+      }
+
+      #overlay[data-mode="death"] {
+        background:
+          radial-gradient(145% 118% at 50% -10%, rgba(185, 70, 70, 0.3), rgba(17, 5, 5, 0.97)),
+          linear-gradient(165deg, rgba(24, 5, 8, 0.95), rgba(12, 4, 7, 0.99));
+      }
+
+      #overlay[data-mode="win"] {
+        background:
+          radial-gradient(150% 114% at 50% -16%, rgba(130, 168, 113, 0.26), rgba(8, 12, 7, 0.96)),
+          linear-gradient(165deg, rgba(10, 15, 9, 0.95), rgba(8, 10, 7, 0.99));
+      }
+
+      @keyframes overlay-scan-shift {
+        from {
+          transform: translateY(0%);
+        }
+        to {
+          transform: translateY(6%);
+        }
+      }
+
+      @keyframes overlay-result-fade-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
       }
 
       #death-tint {
@@ -56,35 +119,149 @@
       }
 
       .panel {
+        position: relative;
         width: min(520px, 92vw);
         padding: 1.6rem;
-        border: 1px solid #8892a633;
-        border-radius: 14px;
-        background: #0d1019f0;
-        box-shadow: 0 14px 40px #000a;
+        border: 1px solid #7f90a947;
+        border-radius: 16px;
+        background: linear-gradient(155deg, rgba(15, 20, 31, 0.95), rgba(9, 12, 19, 0.95));
+        box-shadow: 0 28px 64px rgba(0, 0, 0, 0.68), inset 0 0 0 1px rgba(201, 216, 255, 0.06);
+        backdrop-filter: blur(3px);
       }
 
-      .panel h1 {
-        margin: 0 0 0.5rem;
-        letter-spacing: 0.1rem;
-        font-size: 1.5rem;
+      .panel::before {
+        content: "ENTRY BRIEF";
+        position: absolute;
+        top: 0.8rem;
+        right: 0.9rem;
+        padding: 0.24rem 0.48rem;
+        border: 1px solid #89a0ba61;
+        border-radius: 999px;
+        color: #c0d3e7;
+        background: rgba(8, 14, 21, 0.56);
+        font-family: "Lucida Console", "Courier New", monospace;
+        font-size: 0.62rem;
+        letter-spacing: 0.14rem;
         text-transform: uppercase;
       }
 
+      #overlay[data-mode="death"] .panel {
+        border-color: #d48f8f61;
+        background: linear-gradient(160deg, rgba(30, 9, 11, 0.94), rgba(18, 7, 9, 0.95));
+        box-shadow: 0 28px 64px rgba(0, 0, 0, 0.74), inset 0 0 0 1px rgba(255, 198, 198, 0.07);
+      }
+
+      #overlay[data-mode="death"] .panel::before {
+        content: "SIGNAL LOST";
+        border-color: #e0a3a366;
+        color: #ffd7d7;
+        background: rgba(36, 8, 11, 0.5);
+      }
+
+      #overlay[data-mode="win"] .panel {
+        border-color: #b4c99a63;
+        background: linear-gradient(160deg, rgba(16, 23, 12, 0.94), rgba(11, 16, 9, 0.95));
+        box-shadow: 0 28px 64px rgba(0, 0, 0, 0.72), inset 0 0 0 1px rgba(220, 250, 204, 0.07);
+      }
+
+      #overlay[data-mode="win"] .panel::before {
+        content: "TARGET DOWN";
+        border-color: #c6daac68;
+        color: #e7f7d1;
+        background: rgba(15, 24, 10, 0.52);
+      }
+
+      .panel h1 {
+        margin: 0;
+        font-family: "Impact", "Haettenschweiler", "Arial Narrow Bold", sans-serif;
+        letter-spacing: 0.2rem;
+        font-size: clamp(2rem, 7vw, 2.95rem);
+        text-transform: uppercase;
+        color: #f0f6ff;
+        text-shadow: 0 3px 20px rgba(0, 0, 0, 0.62), 0 0 24px rgba(136, 174, 224, 0.28);
+      }
+
+      #overlay[data-mode="death"] .panel h1 {
+        color: #ffd1d1;
+        text-shadow: 0 3px 20px rgba(0, 0, 0, 0.7), 0 0 25px rgba(205, 78, 78, 0.34);
+      }
+
+      #overlay[data-mode="win"] .panel h1 {
+        color: #e6f6d5;
+        text-shadow: 0 3px 20px rgba(0, 0, 0, 0.64), 0 0 24px rgba(148, 198, 116, 0.32);
+      }
+
+      #overlay-subtitle {
+        margin-top: 0.68rem;
+        padding-top: 0.7rem;
+        border-top: 1px solid #84a2be44;
+        color: #d4deeb;
+        line-height: 1.45;
+      }
+
+      #overlay-controls {
+        margin-top: 0.85rem;
+        display: grid;
+        gap: 0.48rem;
+      }
+
+      #overlay .panel #overlay-controls p {
+        margin: 0;
+        font-size: 0.85rem;
+        line-height: 1.38;
+        color: #cfd9e7;
+      }
+
       .panel p {
-        margin: 0.4rem 0;
+        margin: 0.52rem 0 0;
         color: #d8deeb;
       }
 
       .panel button {
-        margin-top: 1rem;
-        padding: 0.7rem 1.2rem;
-        border: 1px solid #a6e5ff66;
+        margin-top: 1.15rem;
+        width: min(280px, 100%);
+        padding: 0.78rem 1.2rem;
+        border: 1px solid #7ea8cd7e;
         border-radius: 10px;
         cursor: pointer;
         color: #eff8ff;
-        background: linear-gradient(180deg, #375f86, #274762);
+        background: linear-gradient(180deg, #2a4b67, #1a3145);
         font: inherit;
+        font-family: "Lucida Console", "Courier New", monospace;
+        letter-spacing: 0.08rem;
+        text-transform: uppercase;
+        transition:
+          transform 120ms ease,
+          box-shadow 120ms ease,
+          filter 120ms ease;
+      }
+
+      .panel button:hover {
+        transform: translateY(-1px);
+        filter: brightness(1.08);
+        box-shadow: 0 8px 24px rgba(45, 106, 157, 0.32);
+      }
+
+      .panel button:active {
+        transform: translateY(0);
+      }
+
+      #overlay[data-mode="death"] .panel button {
+        border-color: #d28b8b8a;
+        background: linear-gradient(180deg, #6e2e37, #4d1f28);
+      }
+
+      #overlay[data-mode="death"] .panel button:hover {
+        box-shadow: 0 8px 24px rgba(140, 44, 55, 0.32);
+      }
+
+      #overlay[data-mode="win"] .panel button {
+        border-color: #95b57a85;
+        background: linear-gradient(180deg, #36512f, #24381f);
+      }
+
+      #overlay[data-mode="win"] .panel button:hover {
+        box-shadow: 0 8px 24px rgba(81, 126, 58, 0.32);
       }
 
       #overlay-controls.hidden {
@@ -96,6 +273,7 @@
         top: 0.85rem;
         left: 0.9rem;
         z-index: 3;
+        display: none;
         color: #f2f5ff;
         font-size: 0.9rem;
         text-shadow: 0 1px 4px #000;
@@ -465,15 +643,16 @@
 
     <div id="death-tint" aria-hidden="true"></div>
 
-    <div id="overlay">
+    <div id="overlay" data-mode="start">
       <div class="panel">
-        <h1 id="overlay-title">Procedural Maze</h1>
-        <p id="overlay-subtitle">Explore a freshly generated maze in an abandoned warehouse.</p>
-        <p>Move: <strong>WASD</strong></p>
-        <p>Inventory pivot: <strong>Left / Right Arrow</strong></p>
-        <p>Look: <strong>Mouse</strong> (pointer lock)</p>
-        <p id="overlay-controls">Sprint: <strong>Shift</strong> | Jump: <strong>Space</strong> | Flashlight: <strong>L</strong> | Pickup: <strong>E</strong> | Drop selected item: <strong>Q</strong> | Teleport to Wireman: <strong>/</strong> | Left Click: <strong>Melee/fire weapon or hold to consume selected item (jerky/first aid/soda)</strong> | Debug loadout + infinite pistol ammo: <strong>I</strong> | Pistol impact debug: <strong>P</strong> | Test damage: <strong>T</strong> | View: <strong>V</strong> | AO debug: <strong>O</strong> | Bounce debug: <strong>B</strong> | Debug minimap: <strong>H</strong> | Fullscreen: <strong>F</strong> | New maze: <strong>N</strong></p>
-        <button id="start-btn" type="button">Enter Maze</button>
+        <h1 id="overlay-title">Wirehouse</h1>
+        <p id="overlay-subtitle">Enter the warehouse. Scavenge what you can. Survive the Wireman.</p>
+        <div id="overlay-controls">
+          <p><strong>Move:</strong> WASD | <strong>Look:</strong> Mouse | <strong>Sprint:</strong> Shift | <strong>Jump:</strong> Space</p>
+          <p><strong>Use:</strong> Left Click (melee, fire, hold to consume) | <strong>Pickup:</strong> E | <strong>Drop:</strong> Q</p>
+          <p><strong>Inventory:</strong> Left/Right Arrows | <strong>Flashlight:</strong> L | <strong>View:</strong> V | <strong>Fullscreen:</strong> F</p>
+        </div>
+        <button id="start-btn" type="button">Enter Wirehouse</button>
       </div>
     </div>
 
@@ -511,7 +690,7 @@
     </div>
     <div id="inventory-wheel" aria-live="polite">
       <div id="inventory-radial"></div>
-      <div id="inventory-center">Inventory<br /><span id="inventory-count">0/8</span></div>
+      <div id="inventory-center">Inventory</div>
     </div>
     <div id="interaction-hint" aria-live="polite"></div>
     <div id="consume-progress" aria-live="polite">

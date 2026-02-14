@@ -4,6 +4,7 @@ export function createRuntime({
   GLTFLoader,
   EffectComposer,
   SMAAPass,
+  ShaderPass,
   N8AOPass,
   dom,
   config,
@@ -41,6 +42,8 @@ export function createRuntime({
     LEFT_HAND_RIG_BASE_ROTATION,
     LEFT_HAND_ITEM_BASE_ROTATION,
     FLASHLIGHT_BOUNCE_DEFAULT_REFLECTANCE,
+    FOUND_FOOTAGE_GRAIN_INTENSITY,
+    FOUND_FOOTAGE_GRAIN_STATIC_STRENGTH,
   } = constants;
 
   const scene = new THREE.Scene();
@@ -79,6 +82,55 @@ export function createRuntime({
   n8aoPass.setDisplayMode("Combined");
   composer.addPass(n8aoPass);
   composer.addPass(smaaPass);
+  const foundFootageGrainShader = {
+    uniforms: {
+      tDiffuse: { value: null },
+      time: { value: 0 },
+      intensity: { value: FOUND_FOOTAGE_GRAIN_INTENSITY },
+      staticStrength: { value: FOUND_FOOTAGE_GRAIN_STATIC_STRENGTH },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D tDiffuse;
+      uniform float time;
+      uniform float intensity;
+      uniform float staticStrength;
+      varying vec2 vUv;
+
+      // Hash-without-sine PRNG (better distribution than basic dot/fract hashes).
+      float prng(vec3 p) {
+        p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+        p += dot(p, p.yxz + 33.33);
+        return fract((p.x + p.y) * p.z);
+      }
+
+      void main() {
+        vec4 base = texture2D(tDiffuse, vUv);
+        float frame = floor(time * 60.0);
+        vec2 frag = gl_FragCoord.xy;
+        float grain = prng(vec3(frag * 0.77, frame * 0.061)) - 0.5;
+        float fine = prng(vec3(frag * 1.91 + frame * 0.73, frame * 0.113)) - 0.5;
+        float scan = sin((vUv.y + frame * 0.0035) * 960.0) * 0.5 + 0.5;
+        float staticBandSeed = prng(vec3(floor(vUv.y * 180.0), frame * 0.041, 91.7));
+        float staticBand = step(0.985, staticBandSeed);
+        float bandNoise = (
+          prng(vec3(vUv.x * 720.0 + frame * 0.61, floor(vUv.y * 260.0), frame * 0.17)) - 0.5
+        ) * staticBand;
+        float noise = grain * 0.75 + fine * 0.25;
+        float staticPulse = bandNoise * staticStrength + (scan - 0.5) * staticStrength * 0.25;
+        vec3 color = base.rgb + vec3(noise * intensity + staticPulse);
+        gl_FragColor = vec4(clamp(color, 0.0, 1.0), base.a);
+      }
+    `,
+  };
+  const foundFootageGrainPass = new ShaderPass(foundFootageGrainShader);
+  composer.addPass(foundFootageGrainPass);
   composer.setPixelRatio(initialPixelRatio);
   composer.setSize(window.innerWidth, window.innerHeight);
 
@@ -410,6 +462,7 @@ export function createRuntime({
     composer,
     n8aoPass,
     smaaPass,
+    foundFootageGrainPass,
     controls,
     clock,
     floorMaterial,

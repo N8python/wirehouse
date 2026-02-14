@@ -4,6 +4,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { DecalGeometry } from "three/addons/geometries/DecalGeometry.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import {
   MeshBVH,
   acceleratedRaycast,
@@ -57,6 +58,7 @@ export function createGameApp() {
     GLTFLoader,
     EffectComposer,
     SMAAPass,
+    ShaderPass,
     N8AOPass,
     dom,
     config,
@@ -94,7 +96,20 @@ export function createGameApp() {
   const GAME_OVER_CAMERA_DROP_DURATION_SECONDS = 0.9;
   const GAME_OVER_CAMERA_TARGET_Y = Math.max(0.16, config.PLAYER_RADIUS * 0.45);
   const GAME_OVER_CAMERA_TARGET_ROLL_RADIANS = Math.PI * 0.5;
+  const RESULT_OVERLAY_FADE_DURATION_SECONDS = 3;
   const WIREMAN_WIN_SCREEN_DELAY_SECONDS = 5;
+  const DEBUG_KEY_ENABLED = true;
+  const DEBUG_KEY_CODES = new Set([
+    "KeyH",
+    "Slash",
+    "KeyO",
+    "KeyN",
+    "KeyI",
+    "KeyU",
+    "KeyB",
+    "KeyP",
+    "KeyT",
+  ]);
   const PLAYER_FOOTSTEP_WALK_DISTANCE_UNITS = 1.52 * 1.5;
   const PLAYER_FOOTSTEP_SPRINT_DISTANCE_UNITS = 1.06 * 1.5;
   const WIREMAN_FOOTSTEP_WALK_DISTANCE_UNITS = 1.42;
@@ -160,22 +175,61 @@ export function createGameApp() {
   function setOverlayMode(mode = "start") {
     const winMode = mode === "win";
     const deathMode = mode === "death";
+    if (dom.overlay) {
+      dom.overlay.dataset.mode = mode;
+    }
     if (dom.overlayTitle) {
-      dom.overlayTitle.textContent = deathMode ? "Game Over" : winMode ? "You Win" : "Procedural Maze";
+      dom.overlayTitle.textContent = deathMode ? "Game Over" : winMode ? "Victory" : "Wirehouse";
     }
     if (dom.overlaySubtitle) {
       dom.overlaySubtitle.textContent = deathMode
-        ? "The Wireman killed you. Enter the maze to try again."
+        ? "The Wireman got you in the dark. Re-enter Wirehouse and try again."
         : winMode
-          ? "You killed the Wireman. Enter the maze to play again."
-          : "Explore a freshly generated maze in an abandoned warehouse.";
+          ? "Wireman eliminated. The warehouse is silent for now."
+          : "Enter the warehouse. Scavenge what you can. Survive the Wireman.";
     }
     if (dom.overlayControls) {
       dom.overlayControls.classList.toggle("hidden", deathMode || winMode);
     }
     if (dom.startButton) {
-      dom.startButton.textContent = deathMode ? "Try Again" : winMode ? "Play Again" : "Enter Maze";
+      dom.startButton.textContent = deathMode ? "Try Again" : winMode ? "Run It Back" : "Enter Wirehouse";
     }
+  }
+
+  function clearOverlayFadeState() {
+    if (!dom.overlay) {
+      return;
+    }
+    dom.overlay.classList.remove("result-fade-in");
+    dom.overlay.style.removeProperty("--overlay-fade-duration");
+  }
+
+  function hideOverlay() {
+    if (!dom.overlay) {
+      return;
+    }
+    dom.overlay.classList.add("hidden");
+    clearOverlayFadeState();
+  }
+
+  function showOverlay({ fadeIn = false } = {}) {
+    if (!dom.overlay) {
+      return;
+    }
+    if (!fadeIn) {
+      clearOverlayFadeState();
+      dom.overlay.classList.remove("hidden");
+      return;
+    }
+
+    dom.overlay.style.setProperty(
+      "--overlay-fade-duration",
+      `${RESULT_OVERLAY_FADE_DURATION_SECONDS}s`,
+    );
+    dom.overlay.classList.remove("result-fade-in");
+    dom.overlay.classList.remove("hidden");
+    void dom.overlay.offsetWidth;
+    dom.overlay.classList.add("result-fade-in");
   }
 
   function resetMovementInput() {
@@ -244,7 +298,7 @@ export function createGameApp() {
       dom.deathTint.classList.add("active");
     }
     setOverlayMode("death");
-    dom.overlay.classList.remove("hidden");
+    showOverlay({ fadeIn: true });
     setStatus("You were killed by the Wireman.");
     sound.stopAll();
     if (runtime.canUsePointerLock && runtime.controls.isLocked) {
@@ -267,7 +321,7 @@ export function createGameApp() {
       dom.deathTint.classList.remove("active");
     }
     setOverlayMode("win");
-    dom.overlay.classList.remove("hidden");
+    showOverlay({ fadeIn: true });
     dom.crosshair.style.opacity = "0";
     updateCrosshairCooldownIndicator();
     setStatus("Wireman eliminated. You win.");
@@ -702,8 +756,12 @@ export function createGameApp() {
 
   function update(deltaSeconds) {
     elapsed += deltaSeconds;
+    if (runtime.foundFootageGrainPass?.uniforms?.time) {
+      runtime.foundFootageGrainPass.uniforms.time.value = elapsed;
+    }
     const playerXBeforeMovement = runtime.camera.position.x;
     const playerZBeforeMovement = runtime.camera.position.z;
+    inventory.update();
     health.updateConsumableEffects(deltaSeconds, getFlags());
     health.updateJerkyConsume(deltaSeconds, getFlags());
     const consumableState = health.getState();
@@ -885,7 +943,7 @@ export function createGameApp() {
     gameActive = true;
     isTopDownView = false;
     health.cancelJerkyConsume();
-    dom.overlay.classList.add("hidden");
+    hideOverlay();
     dom.crosshair.style.opacity = "1";
     updateCrosshairCooldownIndicator();
     setStatus(config.GAMEPLAY_HINT);
@@ -976,6 +1034,12 @@ export function createGameApp() {
     const code = event.code;
     if (code === "ArrowLeft" || code === "ArrowRight" || code === "Space") {
       event.preventDefault();
+    }
+    if (!DEBUG_KEY_ENABLED && DEBUG_KEY_CODES.has(code)) {
+      return;
+    }
+    if ((code === "ArrowLeft" || code === "ArrowRight") && event.repeat) {
+      return;
     }
     if (code === "ArrowLeft") return inventory.rotateInventoryWheel(-1);
     if (code === "ArrowRight") return inventory.rotateInventoryWheel(1);
@@ -1109,12 +1173,12 @@ export function createGameApp() {
 
     runtime.controls.addEventListener("lock", () => {
       if (isGameOver || hasWon) {
-        dom.overlay.classList.remove("hidden");
+        showOverlay();
         dom.crosshair.style.opacity = "0";
         return;
       }
       isTopDownView = false;
-      dom.overlay.classList.add("hidden");
+      hideOverlay();
       dom.crosshair.style.opacity = "1";
       if (!hasWon) {
         setStatus(config.GAMEPLAY_HINT);
@@ -1129,7 +1193,7 @@ export function createGameApp() {
       if (isGameOver) {
         isTopDownView = false;
         dom.crosshair.style.opacity = "0";
-        dom.overlay.classList.remove("hidden");
+        showOverlay();
         return;
       }
       if (runtime.canUsePointerLock) {
@@ -1137,10 +1201,10 @@ export function createGameApp() {
         isTopDownView = false;
         dom.crosshair.style.opacity = "0.25";
         if (hasWon) {
-          dom.overlay.classList.remove("hidden");
+          showOverlay();
           return;
         }
-        dom.overlay.classList.add("hidden");
+        hideOverlay();
         setStatus("Pointer unlocked. Adjust settings, then click the scene to resume.");
       }
     });

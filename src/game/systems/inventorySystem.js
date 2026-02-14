@@ -16,11 +16,14 @@ export function createInventorySystem({
     DEBUG_INVENTORY_ITEMS,
     BASEBALL_BAT_ITEM_ID,
   } = constants;
-  const { inventoryRadial, inventoryCount, interactionHint } = dom;
+  const { inventoryRadial, interactionHint } = dom;
+  const INVENTORY_ROTATE_ANIMATION_DURATION_MS = 160;
 
   const inventory = [];
   const inventorySlots = [];
   let inventoryWheelRotationSteps = 0;
+  let inventoryWheelRotationUnlockAtMs = 0;
+  const inventoryWheelRotationQueue = [];
   let inventorySelectionOutline = null;
   const dropForward = new THREE.Vector3();
   const dropRight = new THREE.Vector3();
@@ -97,14 +100,36 @@ export function createInventorySystem({
     updateInventoryWheelSlotPositions();
   }
 
+  function consumeQueuedInventoryRotation(nowMs = performance.now()) {
+    const { gameActive, isTopDownView } = getFlags();
+    if (!gameActive || isTopDownView) {
+      inventoryWheelRotationQueue.length = 0;
+      inventoryWheelRotationUnlockAtMs = 0;
+      return false;
+    }
+    if (nowMs < inventoryWheelRotationUnlockAtMs) {
+      return false;
+    }
+    if (!inventoryWheelRotationQueue.length) {
+      return false;
+    }
+
+    const step = inventoryWheelRotationQueue.shift();
+    setInventoryWheelRotationSteps(inventoryWheelRotationSteps + step);
+    inventoryWheelRotationUnlockAtMs = nowMs + INVENTORY_ROTATE_ANIMATION_DURATION_MS;
+    updateInventoryHud();
+    return true;
+  }
+
   function rotateInventoryWheel(stepDirection) {
     const { gameActive, isTopDownView } = getFlags();
     if (!gameActive || isTopDownView) {
-      return;
+      return false;
     }
     const step = stepDirection > 0 ? 1 : -1;
-    setInventoryWheelRotationSteps(inventoryWheelRotationSteps + step);
-    updateInventoryHud();
+    inventoryWheelRotationQueue.push(step);
+    consumeQueuedInventoryRotation(performance.now());
+    return true;
   }
 
   function initInventoryRadial() {
@@ -119,7 +144,7 @@ export function createInventorySystem({
       slot.style.top = "50%";
       slot.style.zIndex = "1";
       slot.style.transition =
-        "left 160ms ease, top 160ms ease, border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease";
+        `left ${INVENTORY_ROTATE_ANIMATION_DURATION_MS}ms ease, top ${INVENTORY_ROTATE_ANIMATION_DURATION_MS}ms ease, border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease`;
 
       const icon = document.createElement("span");
       icon.className = "inventory-slot-icon";
@@ -160,9 +185,6 @@ export function createInventorySystem({
 
     setInventoryWheelRotationSteps(inventoryWheelRotationSteps);
 
-    if (inventoryCount) {
-      inventoryCount.textContent = `${getInventoryOccupiedCount()}/${INVENTORY_MAX_ITEMS}`;
-    }
     if (inventorySelectionOutline) {
       inventorySelectionOutline.style.display = "grid";
     }
@@ -319,6 +341,8 @@ export function createInventorySystem({
 
   function reset() {
     inventory.length = 0;
+    inventoryWheelRotationUnlockAtMs = 0;
+    inventoryWheelRotationQueue.length = 0;
     setInventoryWheelRotationSteps(0);
     updateInventoryHud();
     updatePickupPrompt();
@@ -332,8 +356,13 @@ export function createInventorySystem({
     return inventoryWheelRotationSteps;
   }
 
+  function update() {
+    consumeQueuedInventoryRotation(performance.now());
+  }
+
   return {
     initInventoryRadial,
+    update,
     updateInventoryHud,
     updatePickupPrompt,
     tryPickupNearest,
