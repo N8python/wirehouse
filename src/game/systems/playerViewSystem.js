@@ -16,6 +16,8 @@ export function createPlayerViewSystem({
     VIEW_BOB_BASE_FREQUENCY,
     VIEW_BOB_BASE_AMPLITUDE,
     VIEW_BOB_SMOOTHING,
+    PLAYER_SPRINT_FOV_BOOST_DEGREES,
+    PLAYER_SPRINT_FOV_EMA_HALF_LIFE_SECONDS,
     TOP_DOWN_PLAYER_LOOK_LENGTH,
     FLASHLIGHT_RIG_BASE_POSITION,
     FLASHLIGHT_RIG_BASE_ROTATION,
@@ -38,6 +40,14 @@ export function createPlayerViewSystem({
   let jumpOffset = 0;
   let jumpVelocity = 0;
   let jumpPressedLastFrame = false;
+  const basePlayerFov = camera.fov;
+  let smoothedPlayerFov = basePlayerFov;
+
+  function emaTowards(current, target, deltaSeconds, halfLifeSeconds) {
+    const safeHalfLife = Math.max(0.0001, halfLifeSeconds);
+    const blend = 1 - Math.pow(0.5, Math.max(0, deltaSeconds) / safeHalfLife);
+    return current + (target - current) * blend;
+  }
 
   function resetPose() {
     viewBobPhase = 0;
@@ -46,6 +56,11 @@ export function createPlayerViewSystem({
     jumpOffset = 0;
     jumpVelocity = 0;
     jumpPressedLastFrame = false;
+    smoothedPlayerFov = basePlayerFov;
+    if (Math.abs(camera.fov - basePlayerFov) > 0.0001) {
+      camera.fov = basePlayerFov;
+      camera.updateProjectionMatrix();
+    }
     camera.position.y = PLAYER_HEIGHT;
     flashlightRig.position.copy(FLASHLIGHT_RIG_BASE_POSITION);
     flashlightRig.rotation.copy(FLASHLIGHT_RIG_BASE_ROTATION);
@@ -143,6 +158,19 @@ export function createPlayerViewSystem({
     isSprintActive,
   }) {
     const bobAllowed = gameActive && !hasWon && !isTopDownView;
+    const sprintFovTarget =
+      basePlayerFov + (isSprintActive && bobAllowed ? PLAYER_SPRINT_FOV_BOOST_DEGREES : 0);
+    smoothedPlayerFov = emaTowards(
+      smoothedPlayerFov,
+      sprintFovTarget,
+      deltaSeconds,
+      PLAYER_SPRINT_FOV_EMA_HALF_LIFE_SECONDS,
+    );
+    if (Math.abs(camera.fov - smoothedPlayerFov) > 0.0001) {
+      camera.fov = smoothedPlayerFov;
+      camera.updateProjectionMatrix();
+    }
+
     if (!bobAllowed) {
       viewBobBlend = 0;
     } else {

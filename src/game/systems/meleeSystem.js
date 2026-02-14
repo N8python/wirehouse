@@ -9,6 +9,10 @@ export function createMeleeSystem({
   getSelectedInventoryItem,
   getWireman,
   setStatus,
+  playMeleeMissSound,
+  playMeleeHitWallSound,
+  playMeleeHitWiremanSound,
+  playKnifeHitWiremanSound,
 }) {
   const { MELEE_WEAPON_CONFIG } = constants;
   const MELEE_COOLDOWN_IDLE_DROP_Y = 2;
@@ -68,6 +72,11 @@ export function createMeleeSystem({
       return object.name;
     }
     return "target";
+  }
+
+  function isWallHitObject(object) {
+    const { wallMesh } = getWorldSurfaces();
+    return object === wallMesh;
   }
 
   function resolveMeleeAttackDirection() {
@@ -130,6 +139,11 @@ export function createMeleeSystem({
     );
     if (canHitWiremanFirst) {
       const damageResult = wireman.applyDamage?.(weaponConfig.damage || 0, selectedItem.id);
+      if (selectedItem?.id === "knife_01") {
+        playKnifeHitWiremanSound?.();
+      } else {
+        playMeleeHitWiremanSound?.();
+      }
       if (damageResult?.diedNow) {
         setStatus(`${weaponConfig.displayName} killed wireman.`);
       } else if (damageResult?.applied) {
@@ -145,10 +159,14 @@ export function createMeleeSystem({
     }
 
     if (!hit) {
+      playMeleeMissSound?.();
       setStatus(`${weaponConfig.displayName} missed.`);
       return true;
     }
 
+    if (isWallHitObject(hit.object)) {
+      playMeleeHitWallSound?.();
+    }
     setStatus(`${weaponConfig.displayName} hit ${getMeleeHitLabel(hit.object)}.`);
     return true;
   }

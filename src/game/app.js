@@ -36,6 +36,7 @@ import { createHealthConsumableSystem } from "./systems/healthConsumableSystem.j
 import { createPistolSystem } from "./systems/pistolSystem.js";
 import { createMeleeSystem } from "./systems/meleeSystem.js";
 import { createWiremanSystem } from "./systems/wiremanSystem.js";
+import { createSoundSystem } from "./systems/soundSystem.js";
 import { createRenderGameToText } from "./renderGameToText.js";
 import { configureDebugApis } from "./debugApi.js";
 
@@ -67,6 +68,7 @@ export function createGameApp() {
     createWarehousePropScatter,
     createPickupSystem,
   });
+  const sound = createSoundSystem();
 
   let hasWon = false;
   let gameActive = false;
@@ -81,15 +83,36 @@ export function createGameApp() {
   let isGameOver = false;
   let gameOverCameraElapsed = 0;
   let gameOverCameraStartY = config.PLAYER_HEIGHT;
+  let wiremanWinCountdownActive = false;
+  let wiremanWinDelayRemaining = 0;
+  let playerFootstepDistanceAccumulator = 0;
+  let wiremanFootstepDistanceAccumulator = 0;
+  let wiremanFootstepHasPreviousPosition = false;
+  let wiremanFootstepPreviousX = 0;
+  let wiremanFootstepPreviousZ = 0;
 
   const GAME_OVER_CAMERA_DROP_DURATION_SECONDS = 0.9;
   const GAME_OVER_CAMERA_TARGET_Y = Math.max(0.16, config.PLAYER_RADIUS * 0.45);
   const GAME_OVER_CAMERA_TARGET_ROLL_RADIANS = Math.PI * 0.5;
+  const WIREMAN_WIN_SCREEN_DELAY_SECONDS = 5;
+  const PLAYER_FOOTSTEP_WALK_DISTANCE_UNITS = 1.52 * 1.5;
+  const PLAYER_FOOTSTEP_SPRINT_DISTANCE_UNITS = 1.06 * 1.5;
+  const WIREMAN_FOOTSTEP_WALK_DISTANCE_UNITS = 1.42;
+  const WIREMAN_FOOTSTEP_SPRINT_DISTANCE_UNITS = 0.96;
+  const WIREMAN_FOOTSTEP_AUDIBLE_DISTANCE_UNITS = 20;
   const gameOverCameraStartQuaternion = new THREE.Quaternion();
   const gameOverCameraTargetQuaternion = new THREE.Quaternion();
   const gameOverCameraEuler = new THREE.Euler(0, 0, 0, "YXZ");
 
   const keyState = {
+    forward: false,
+    backward: false,
+    left: false,
+    right: false,
+    sprint: false,
+    jump: false,
+  };
+  const immobilizedKeyState = {
     forward: false,
     backward: false,
     left: false,
@@ -135,20 +158,23 @@ export function createGameApp() {
   }
 
   function setOverlayMode(mode = "start") {
+    const winMode = mode === "win";
     const deathMode = mode === "death";
     if (dom.overlayTitle) {
-      dom.overlayTitle.textContent = deathMode ? "Game Over" : "Procedural Maze";
+      dom.overlayTitle.textContent = deathMode ? "Game Over" : winMode ? "You Win" : "Procedural Maze";
     }
     if (dom.overlaySubtitle) {
       dom.overlaySubtitle.textContent = deathMode
         ? "The Wireman killed you. Enter the maze to try again."
-        : "Explore a freshly generated maze in an abandoned warehouse.";
+        : winMode
+          ? "You killed the Wireman. Enter the maze to play again."
+          : "Explore a freshly generated maze in an abandoned warehouse.";
     }
     if (dom.overlayControls) {
-      dom.overlayControls.classList.toggle("hidden", deathMode);
+      dom.overlayControls.classList.toggle("hidden", deathMode || winMode);
     }
     if (dom.startButton) {
-      dom.startButton.textContent = deathMode ? "Try Again" : "Enter Maze";
+      dom.startButton.textContent = deathMode ? "Try Again" : winMode ? "Play Again" : "Enter Maze";
     }
   }
 
@@ -168,6 +194,11 @@ export function createGameApp() {
       dom.deathTint.classList.remove("active");
     }
     setOverlayMode("start");
+  }
+
+  function resetWinCountdown() {
+    wiremanWinCountdownActive = false;
+    wiremanWinDelayRemaining = 0;
   }
 
   function updateGameOverCameraFall(deltaSeconds) {
@@ -215,6 +246,32 @@ export function createGameApp() {
     setOverlayMode("death");
     dom.overlay.classList.remove("hidden");
     setStatus("You were killed by the Wireman.");
+    sound.stopAll();
+    if (runtime.canUsePointerLock && runtime.controls.isLocked) {
+      suppressUnlockPause = true;
+      runtime.controls.unlock();
+    }
+  }
+
+  function triggerWin() {
+    if (hasWon || isGameOver) {
+      return;
+    }
+    resetWinCountdown();
+    hasWon = true;
+    gameActive = false;
+    isTopDownView = false;
+    resetMovementInput();
+    health.cancelJerkyConsume();
+    if (dom.deathTint) {
+      dom.deathTint.classList.remove("active");
+    }
+    setOverlayMode("win");
+    dom.overlay.classList.remove("hidden");
+    dom.crosshair.style.opacity = "0";
+    updateCrosshairCooldownIndicator();
+    setStatus("Wireman eliminated. You win.");
+    sound.stopAll();
     if (runtime.canUsePointerLock && runtime.controls.isLocked) {
       suppressUnlockPause = true;
       runtime.controls.unlock();
@@ -260,6 +317,7 @@ export function createGameApp() {
     pistolMuzzleFlashLight: runtime.pistolMuzzleFlashLight,
     pistolHitDebugMarker: runtime.pistolHitDebugMarker,
     getWireman: () => wireman,
+    playPistolFireSound: sound.playPistolFire,
   });
   inventory = createInventorySystem({
     THREE,
@@ -287,6 +345,10 @@ export function createGameApp() {
     updateInventoryHud: inventory.updateInventoryHud,
     updatePickupPrompt: inventory.updatePickupPrompt,
     setStatus,
+    startEatJerkySoundLoop: sound.startEatJerkyLoop,
+    stopEatJerkySoundLoop: sound.stopEatJerkyLoop,
+    playDrinkSodaSound: sound.playDrinkSoda,
+    playHeartbeatSound: sound.playHeartbeat,
   });
   const melee = createMeleeSystem({
     THREE,
@@ -302,6 +364,10 @@ export function createGameApp() {
     getSelectedInventoryItem: inventory.getSelectedInventoryItem,
     getWireman: () => wireman,
     setStatus,
+    playMeleeMissSound: sound.playMeleeMiss,
+    playMeleeHitWallSound: sound.playMeleeHitWall,
+    playMeleeHitWiremanSound: sound.playMeleeHitWireman,
+    playKnifeHitWiremanSound: sound.playKnifeHitWireman,
   });
   const playerView = createPlayerViewSystem({
     THREE,
@@ -345,6 +411,7 @@ export function createGameApp() {
     config,
     constants,
     applyPlayerDamage: health.applyPlayerDamage,
+    playWiremanAttackSound: sound.playWiremanAttackSound,
   });
 
   function lerpColorChannel(from, to, t) {
@@ -529,12 +596,17 @@ export function createGameApp() {
     hasWon = false;
     gameActive = false;
     isTopDownView = false;
+    resetWinCountdown();
     resetMovementInput();
     resetGameOverState();
+    playerFootstepDistanceAccumulator = 0;
+    wiremanFootstepDistanceAccumulator = 0;
+    wiremanFootstepHasPreviousPosition = false;
     playerView.resetPose();
     health.reset();
     melee.reset();
     pistol.reset();
+    sound.stopAll();
     inventory.reset();
     world.regenerateMaze();
     wireman.onMazeRegenerated();
@@ -630,16 +702,28 @@ export function createGameApp() {
 
   function update(deltaSeconds) {
     elapsed += deltaSeconds;
+    const playerXBeforeMovement = runtime.camera.position.x;
+    const playerZBeforeMovement = runtime.camera.position.z;
     health.updateConsumableEffects(deltaSeconds, getFlags());
-    const hasMovementInput = keyState.forward || keyState.backward || keyState.left || keyState.right;
+    health.updateJerkyConsume(deltaSeconds, getFlags());
+    const consumableState = health.getState();
+    const consumableUseActive = Boolean(consumableState.jerkyConsumeActive);
+    const movementKeyState = consumableUseActive ? immobilizedKeyState : keyState;
+    const hasMovementInput =
+      movementKeyState.forward ||
+      movementKeyState.backward ||
+      movementKeyState.left ||
+      movementKeyState.right;
     const staminaCanChange = gameActive && !hasWon && !isTopDownView;
     const sprintActive = health.updateStamina(deltaSeconds, {
-      wantsSprint: staminaCanChange && hasMovementInput && keyState.sprint,
+      wantsSprint: staminaCanChange && hasMovementInput && movementKeyState.sprint,
       allowRegeneration: staminaCanChange,
     });
-    health.updateHealthHeartBeatVisual(elapsed, { isSprinting: sprintActive });
+    health.updateHealthHeartBeatVisual(elapsed, {
+      isSprinting: sprintActive,
+      playBeatSound: gameActive && !hasWon && !isGameOver,
+    });
     health.updateHealthDamageTrail(deltaSeconds);
-    health.updateJerkyConsume(deltaSeconds, getFlags());
     flashlight.updateFlashlightFlicker(deltaSeconds, { isTopDownView });
     flashlight.updateFlashlightBounceLight(deltaSeconds, { isTopDownView, hasWon });
     runtime.pickupSystem.update(deltaSeconds);
@@ -651,7 +735,7 @@ export function createGameApp() {
       playerView.updatePlayerMovement(deltaSeconds, {
         gameActive,
         hasWon,
-        keyState,
+        keyState: movementKeyState,
         isSprintActive: sprintActive,
         getPlayerSpeedMultiplier: health.getPlayerSpeedMultiplier,
       });
@@ -663,11 +747,28 @@ export function createGameApp() {
       });
     }
     wireman.update(deltaSeconds, { gameActive, hasWon, isTopDownView });
+    const wiremanState = wireman.getState?.() || null;
     if (!isGameOver && gameActive && !hasWon && health.getState().playerHealth <= 0) {
       triggerGameOver();
     }
+    if (!isGameOver && !hasWon) {
+      if (wiremanState?.dead) {
+        if (!wiremanWinCountdownActive) {
+          wiremanWinCountdownActive = true;
+          wiremanWinDelayRemaining = WIREMAN_WIN_SCREEN_DELAY_SECONDS;
+          setStatus("Wireman eliminated.");
+        } else {
+          wiremanWinDelayRemaining = Math.max(0, wiremanWinDelayRemaining - deltaSeconds);
+        }
+        if (wiremanWinDelayRemaining <= 0) {
+          triggerWin();
+        }
+      } else if (wiremanWinCountdownActive) {
+        resetWinCountdown();
+      }
+    }
+    const jumpState = playerView.getJumpState?.() || null;
     if (!isGameOver && gameActive && !hasWon && !isTopDownView) {
-      const jumpState = playerView.getJumpState?.() || null;
       const resolvedPlayerCollision = wireman.resolvePlayerCapsuleCollision?.({
         playerX: runtime.camera.position.x,
         playerZ: runtime.camera.position.z,
@@ -678,6 +779,76 @@ export function createGameApp() {
         runtime.camera.position.x = resolvedPlayerCollision.x;
         runtime.camera.position.z = resolvedPlayerCollision.z;
       }
+    }
+    const playerMovedDistance = Math.hypot(
+      runtime.camera.position.x - playerXBeforeMovement,
+      runtime.camera.position.z - playerZBeforeMovement,
+    );
+    if (gameActive && !hasWon && !isTopDownView && !isGameOver) {
+      const grounded = jumpState ? Boolean(jumpState.grounded) : true;
+      if (hasMovementInput && grounded && playerMovedDistance > 0.0001) {
+        const playerSpeedMultiplier = Math.max(
+          0.0001,
+          Number(health.getPlayerSpeedMultiplier?.() || 1),
+        );
+        const strideDistance =
+          (sprintActive
+            ? PLAYER_FOOTSTEP_SPRINT_DISTANCE_UNITS
+            : PLAYER_FOOTSTEP_WALK_DISTANCE_UNITS) * playerSpeedMultiplier;
+        playerFootstepDistanceAccumulator += playerMovedDistance;
+        while (playerFootstepDistanceAccumulator >= strideDistance) {
+          playerFootstepDistanceAccumulator -= strideDistance;
+          sound.playFootstep({ sprint: sprintActive });
+        }
+      } else if (!hasMovementInput || !grounded) {
+        playerFootstepDistanceAccumulator = 0;
+      }
+    } else {
+      playerFootstepDistanceAccumulator = 0;
+    }
+    if (
+      gameActive &&
+      !hasWon &&
+      !isTopDownView &&
+      !isGameOver &&
+      wiremanState?.loaded &&
+      !wiremanState?.dead &&
+      wiremanState?.position
+    ) {
+      const wiremanX = Number(wiremanState.position.x) || 0;
+      const wiremanZ = Number(wiremanState.position.z) || 0;
+      if (wiremanFootstepHasPreviousPosition) {
+        const wiremanMovedDistance = Math.hypot(
+          wiremanX - wiremanFootstepPreviousX,
+          wiremanZ - wiremanFootstepPreviousZ,
+        );
+        if (wiremanState.moving && wiremanMovedDistance > 0.0001) {
+          const strideDistance = wiremanState.sprinting
+            ? WIREMAN_FOOTSTEP_SPRINT_DISTANCE_UNITS
+            : WIREMAN_FOOTSTEP_WALK_DISTANCE_UNITS;
+          wiremanFootstepDistanceAccumulator += wiremanMovedDistance;
+          const playerDistanceToWireman = Math.hypot(
+            runtime.camera.position.x - wiremanX,
+            runtime.camera.position.z - wiremanZ,
+          );
+          while (wiremanFootstepDistanceAccumulator >= strideDistance) {
+            wiremanFootstepDistanceAccumulator -= strideDistance;
+            sound.playWiremanFootstep({
+              sprint: Boolean(wiremanState.sprinting),
+              distance: playerDistanceToWireman,
+              maxDistance: WIREMAN_FOOTSTEP_AUDIBLE_DISTANCE_UNITS,
+            });
+          }
+        } else {
+          wiremanFootstepDistanceAccumulator = 0;
+        }
+      }
+      wiremanFootstepPreviousX = wiremanX;
+      wiremanFootstepPreviousZ = wiremanZ;
+      wiremanFootstepHasPreviousPosition = true;
+    } else {
+      wiremanFootstepDistanceAccumulator = 0;
+      wiremanFootstepHasPreviousPosition = false;
     }
     melee.updateMeleeAttack(deltaSeconds);
     health.updateConsumableUseVisuals(elapsed);
@@ -708,6 +879,8 @@ export function createGameApp() {
   }
 
   function activateGameplay() {
+    sound.markUserGesture();
+    sound.startBgmLoop();
     resetGameOverState();
     gameActive = true;
     isTopDownView = false;
@@ -799,6 +972,7 @@ export function createGameApp() {
   }
 
   function onKeyDown(event) {
+    sound.markUserGesture();
     const code = event.code;
     if (code === "ArrowLeft" || code === "ArrowRight" || code === "Space") {
       event.preventDefault();
@@ -846,6 +1020,7 @@ export function createGameApp() {
   }
 
   function onPointerDown(event) {
+    sound.markUserGesture();
     if (event.button !== 0) return;
     if (!gameActive || hasWon || isTopDownView || isGameOver) return;
     if (runtime.canUsePointerLock && !runtime.controls.isLocked) return;
@@ -911,14 +1086,16 @@ export function createGameApp() {
 
   function setupInteractions() {
     dom.startButton.addEventListener("click", () => {
+      sound.markUserGesture();
       if (hasWon || isGameOver) {
         regenerateMaze();
       }
       activateGameplay();
     });
     runtime.renderer.domElement.addEventListener("click", () => {
+      sound.markUserGesture();
       if (!gameActive) {
-        if (isGameOver) {
+        if (isGameOver || hasWon) {
           return;
         }
         activateGameplay();
@@ -931,7 +1108,7 @@ export function createGameApp() {
     runtime.renderer.domElement.addEventListener("pointercancel", onPointerUp);
 
     runtime.controls.addEventListener("lock", () => {
-      if (isGameOver) {
+      if (isGameOver || hasWon) {
         dom.overlay.classList.remove("hidden");
         dom.crosshair.style.opacity = "0";
         return;

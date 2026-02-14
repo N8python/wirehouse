@@ -846,3 +846,92 @@ Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedu
   - Added corresponding DOM refs in `src/game/domRefs.js`.
 - Debug/state output update:
   - `render_game_to_text` now reports `mode: "game_over"` and `flags.gameOver` when dead.
+- Added a win-screen flow when Wireman dies:
+  - `app.js` now detects `wireman.getState().dead` during active play and triggers `hasWon` via `triggerWin()`.
+  - Overlay mode now supports `win` (title/subtitle/button text update, controls text hidden).
+  - Winning exits gameplay, unlocks pointer lock, hides crosshair, and shows restart overlay (`Play Again`).
+  - Prevented click-to-resume from bypassing restart when in won/game-over states.
+- Adjusted win-screen timing: win overlay now appears 5 seconds after Wireman dies.
+  - Added `WIREMAN_WIN_SCREEN_DELAY_SECONDS = 5` countdown state in `app.js`.
+  - Countdown starts once on Wireman death, status updates to `Wireman eliminated.`, and then `triggerWin()` fires after delay.
+  - Countdown is reset on maze regeneration/restart and when win is finalized.
+- Added gameplay SFX with online-sourced CC0 assets (BigSoundBank):
+  - Downloaded and added local files under `assets/audio/sfx/`:
+    - `footsteps_gravel.wav` (ID 0839)
+    - `melee_miss_whoosh.wav` (ID 1801)
+    - `melee_hit_wall.wav` (ID 0401)
+    - `melee_hit_wireman.wav` (ID 2468)
+    - `pistol_fire.wav` (ID 0397)
+    - `eat_jerky.wav` (ID 1432)
+    - `drink_soda.wav` (ID 0116)
+  - Trimmed long source WAVs with ffmpeg to short gameplay-friendly clips.
+- Added `src/game/systems/soundSystem.js`:
+  - Pooled HTMLAudio playback, gesture-unlock gating, and dedicated play APIs per effect.
+- Integrated sound triggers:
+  - Footsteps: distance-based cadence in `app.js` while moving/grounded (walk vs sprint stride tuning).
+  - Melee: miss / wall hit / wireman hit callbacks from `meleeSystem`.
+  - Pistol: fire callback from `pistolSystem` on successful shot commit.
+  - Consumables: jerky-eat and soda-drink callbacks from `healthConsumableSystem`.
+- Added source/license documentation to `assets/audio/CREDITS.md` (CC0 asset pages + sound IDs).
+- Replaced footstep SFX with the user-specified Freesound clip:
+  - Source page: https://freesound.org/people/xmike80x/sounds/706207/
+  - Local asset: `assets/audio/sfx/footsteps_freesound_706207.mp3` (HQ preview URL)
+  - Updated `soundSystem` footsteps source to this MP3.
+  - Updated `assets/audio/CREDITS.md` footsteps entry to Freesound + CC0 license.
+- Updated jerky consume audio behavior to loop for the full hold-to-eat duration:
+  - Added loop-capable jerky channel in `src/game/systems/soundSystem.js` (`startEatJerkyLoop` / `stopEatJerkyLoop`).
+  - `healthConsumableSystem` now starts jerky loop on consume begin and stops it on cancel, completion, reset, and global `sound.stopAll()` paths.
+  - Removed one-shot jerky playback at consume completion so audio now matches active eating window.
+- Added Wireman footsteps with distance attenuation:
+  - Pulled Freesound clip `810709` (Artninja, CC BY 4.0) and extracted a single step to `assets/audio/sfx/wireman_footstep_freesound_810709.mp3`.
+  - Added `playWiremanFootstep({distance,maxDistance,sprint})` in `src/game/systems/soundSystem.js` with quadratic distance falloff and ~20-unit audible range cutoff.
+  - Integrated movement-distance step cadence in `src/game/app.js` using `wireman.getState()` movement/position (`wiremanState.moving`, `wiremanState.sprinting`) with separate walk/sprint stride distances.
+  - Updated `assets/audio/CREDITS.md` with Wireman source attribution/license and clarified mixed CC0/CC BY licensing notes.
+- Reworked Wireman `810709` audio usage per follow-up request:
+  - Removed Wireman movement footstep triggering from `app.js`.
+  - Repurposed the clip as a dedicated attack SFX (`playWiremanAttackSound`) in `soundSystem`.
+  - Wired `playWiremanAttackSound` into `wiremanSystem` and trigger it once in `startAttackCommit()` so it plays right as attack animation begins.
+  - Renamed local asset to `assets/audio/sfx/wireman_attack_freesound_810709.mp3` and updated credits entry heading/path.
+- Updated Wireman attack SFX to reuse the player's footstep clip and pitch it down slightly:
+  - `wiremanAttack` pool now uses `assets/audio/sfx/footsteps_freesound_706207.mp3`.
+  - `playWiremanAttackSound` playback tuned to `playbackRate: 0.9` with light jitter for a subtle lower pitch.
+  - Credits updated to reflect the reused source instead of separate Wireman-specific source attribution.
+- Audio mapping corrected per latest request:
+  - Wireman attack now uses `assets/audio/sfx/wireman_attack_freesound_810709.mp3` again.
+  - Wireman movement footsteps restored and now reuse the player's `footsteps_freesound_706207.mp3` with distance attenuation and walk/sprint cadence.
+  - Credits updated to reflect separate Wireman attack source (810709) plus reused footstep source for Wireman movement.
+- Trimmed `assets/audio/sfx/melee_hit_wall.wav` to a single wall-impact transient (removed extra peaks/tails).
+  - New duration: `0.09s`.
+  - Verified a single dominant peak remains in signal analysis.
+- Reworked `melee_hit_wall.wav` again to avoid premature cutoff:
+  - Re-pulled the original BigSoundBank `0401.wav` source and re-extracted a single isolated strike with a longer decay tail.
+  - New wall-hit clip duration: `0.24s` (up from `0.09s`).
+  - Verified one dominant peak remains in analysis (single-hit behavior preserved).
+- Updated knife-on-wireman melee hit SFX to Freesound `413496`:
+  - Added `assets/audio/sfx/knife_hit_wireman_freesound_413496.mp3` from InspectorJ (CC BY 4.0).
+  - Added `playKnifeHitWireman()` in `soundSystem` and wired it through `app.js` into `meleeSystem`.
+  - `meleeSystem` now plays knife-specific wireman-hit SFX when `selectedItem.id === "knife_01"`; bat/default wireman-hit uses the existing `melee_hit_wireman.wav`.
+  - Updated `assets/audio/CREDITS.md` with attribution/license/source URL for `413496` and clarified bat/default wireman hit entry.
+- Adjusted player footstep cadence under soda speed boost:
+  - In `src/game/app.js`, player footstep stride distance now scales by `health.getPlayerSpeedMultiplier()`.
+  - Result: when soda increases movement speed, required distance per step increases proportionally, keeping footstep frequency stable instead of accelerating.
+- Wired background music loop from `assets/audio/bgm.mp3`:
+  - Added looped BGM channel in `src/game/systems/soundSystem.js` with `startBgmLoop` / `stopBgmLoop` APIs.
+  - `activateGameplay()` now calls `sound.startBgmLoop()` after user gesture unlock.
+  - BGM participates in existing `sound.stopAll()` flow (stops on game over/win/regenerate and restarts when gameplay is activated again).
+- Reduced BGM playback loudness by 50%:
+  - `startBgmLoop()` now starts with `volumeScale: 0.5` in `src/game/systems/soundSystem.js`.
+- Added sprint FOV response with smoothing:
+  - New constants in `src/game/constants.js`: `PLAYER_SPRINT_FOV_BOOST_DEGREES` (`4`) and `PLAYER_SPRINT_FOV_EMA_HALF_LIFE_SECONDS` (`0.09`).
+  - `src/game/systems/playerViewSystem.js` now tracks base camera FOV, computes a sprint target FOV, EMA-blends camera FOV toward it every frame, and updates projection only when the value changes.
+  - `resetPose()` now restores camera FOV to base immediately.
+- Added heartbeat SFX synced to HUD pulse timing:
+  - Imported Freesound clip `418788` to `assets/audio/sfx/heartbeat_freesound_418788.mp3`.
+  - Added `playHeartbeat` to `src/game/systems/soundSystem.js`.
+  - `src/game/systems/healthConsumableSystem.js` now detects primary/secondary heartbeat pulse crossings from the same phase used by heart visual scaling and triggers `playHeartbeatSound` on each beat.
+  - Wired callback in `src/game/app.js` (`playHeartbeatSound: sound.playHeartbeat`).
+  - Updated attribution in `assets/audio/CREDITS.md`.
+- Reduced heartbeat SFX loudness to ~50% in `src/game/systems/soundSystem.js` by lowering `playHeartbeat` volume scale (`0.5` normal / `0.55` low-stamina boost).
+- Locked player locomotion during consumable use (jerky, first aid kit, soda):
+  - In `src/game/app.js`, update loop now processes consumable-use state before movement and swaps to an immobilized key-state when `health.getState().jerkyConsumeActive` is true.
+  - Effect: no movement/sprint/jump translation, no sprint stamina drain, and no player footsteps while consuming.

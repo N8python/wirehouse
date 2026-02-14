@@ -11,6 +11,10 @@ export function createHealthConsumableSystem({
   updateInventoryHud,
   updatePickupPrompt,
   setStatus,
+  startEatJerkySoundLoop,
+  stopEatJerkySoundLoop,
+  playDrinkSodaSound,
+  playHeartbeatSound,
 }) {
   const {
     PLAYER_MAX_HEALTH,
@@ -74,6 +78,7 @@ export function createHealthConsumableSystem({
   let consumableUseLabel = "";
   let firstAidRegenRemaining = 0;
   let sodaSpeedBoostRemaining = 0;
+  let previousHeartbeatCycleRaw = null;
 
   function reset() {
     setPlayerHealth(PLAYER_MAX_HEALTH);
@@ -85,6 +90,7 @@ export function createHealthConsumableSystem({
     cancelJerkyConsume();
     firstAidRegenRemaining = 0;
     sodaSpeedBoostRemaining = 0;
+    previousHeartbeatCycleRaw = null;
     updateBuffHud();
   }
 
@@ -282,6 +288,7 @@ export function createHealthConsumableSystem({
     updateInventoryHud();
     updatePickupPrompt();
     updateBuffHud();
+    playDrinkSodaSound?.();
     setStatus(`Drank soda. Speed boost active (+50% for ${SODA_SPEED_DURATION_SECONDS}s).`);
     return true;
   }
@@ -343,6 +350,9 @@ export function createHealthConsumableSystem({
     if (!jerkyConsumeActive && jerkyConsumeElapsed <= 0 && !consumableUseItemId) {
       return;
     }
+    if (consumableUseItemId === JERKY_ITEM_ID) {
+      stopEatJerkySoundLoop?.();
+    }
     jerkyConsumeActive = false;
     jerkyConsumeElapsed = 0;
     consumableUseItemId = null;
@@ -368,6 +378,9 @@ export function createHealthConsumableSystem({
     consumableUseItemId = config.itemId;
     consumableUseDuration = config.durationSeconds;
     consumableUseLabel = config.label;
+    if (config.itemId === JERKY_ITEM_ID) {
+      startEatJerkySoundLoop?.();
+    }
     updateJerkyConsumeHud();
     setStatus(`${config.label} Keep holding left click.`);
     return true;
@@ -398,6 +411,9 @@ export function createHealthConsumableSystem({
 
     jerkyConsumeElapsed += Math.max(0, deltaSeconds);
     if (jerkyConsumeElapsed >= consumableUseDuration) {
+      if (consumableUseItemId === JERKY_ITEM_ID) {
+        stopEatJerkySoundLoop?.();
+      }
       jerkyConsumeActive = false;
       jerkyConsumeElapsed = consumableUseDuration;
       updateJerkyConsumeHud();
@@ -446,9 +462,10 @@ export function createHealthConsumableSystem({
     return amplitude * gaussian;
   }
 
-  function updateHealthHeartBeatVisual(elapsed, { isSprinting = false } = {}) {
+  function updateHealthHeartBeatVisual(elapsed, { isSprinting = false, playBeatSound = true } = {}) {
     if (!healthHeartImage && !healthHeartStaminaImage) {
       lowStaminaHeartbeatBoostActive = false;
+      previousHeartbeatCycleRaw = null;
       return;
     }
     const staminaRatio = PLAYER_MAX_STAMINA > 0 ? playerStamina / PLAYER_MAX_STAMINA : 0;
@@ -458,9 +475,26 @@ export function createHealthConsumableSystem({
     const heartbeatFrequencyScale = lowStaminaSprint
       ? STAMINA_LOW_SPRINT_HEARTBEAT_FREQUENCY_MULTIPLIER
       : 1;
-    const phase =
-      ((elapsed * heartbeatFrequencyScale) % HEALTH_HEARTBEAT_CYCLE_SECONDS) /
-      HEALTH_HEARTBEAT_CYCLE_SECONDS;
+    const heartbeatCycleRaw =
+      (elapsed * heartbeatFrequencyScale) / Math.max(0.0001, HEALTH_HEARTBEAT_CYCLE_SECONDS);
+    const phase = heartbeatCycleRaw - Math.floor(heartbeatCycleRaw);
+
+    if (Number.isFinite(previousHeartbeatCycleRaw) && Number.isFinite(heartbeatCycleRaw)) {
+      if (heartbeatCycleRaw > previousHeartbeatCycleRaw) {
+        const pulseCenters = [HEALTH_HEARTBEAT_PRIMARY_TIME, HEALTH_HEARTBEAT_SECONDARY_TIME];
+        for (const pulseCenter of pulseCenters) {
+          const previousPulseCount = Math.floor(previousHeartbeatCycleRaw - pulseCenter);
+          const currentPulseCount = Math.floor(heartbeatCycleRaw - pulseCenter);
+          if (playBeatSound && currentPulseCount > previousPulseCount) {
+            playHeartbeatSound?.({ lowStaminaBoost: lowStaminaSprint });
+          }
+        }
+      } else if (heartbeatCycleRaw < previousHeartbeatCycleRaw) {
+        // Frequency scaling can jump backward when sprint boost drops; realign silently.
+      }
+    }
+    previousHeartbeatCycleRaw = heartbeatCycleRaw;
+
     const beatScale =
       1 +
       evaluateHeartbeatPulse(phase, HEALTH_HEARTBEAT_PRIMARY_TIME, HEALTH_HEARTBEAT_PRIMARY_AMPLITUDE) +

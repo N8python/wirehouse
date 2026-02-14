@@ -22,6 +22,7 @@ export function createWiremanSystem({
   config,
   constants,
   applyPlayerDamage,
+  playWiremanAttackSound,
 }) {
   const {
     WIREMAN_MODEL_PATH,
@@ -438,6 +439,7 @@ export function createWiremanSystem({
     wiremanAttackDuration = getAttackAnimationDurationSeconds();
     wiremanAttackHitMomentSeconds = wiremanAttackDuration * 0.5;
     wiremanAttackHitApplied = false;
+    playWiremanAttackSound?.();
     wiremanAttackCooldownRemaining = Math.max(
       wiremanAttackCooldownRemaining,
       WIREMAN_ATTACK_COOLDOWN_SECONDS,

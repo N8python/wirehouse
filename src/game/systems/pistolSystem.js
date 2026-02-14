@@ -24,6 +24,7 @@ export function createPistolSystem({
   pistolMuzzleFlashLight,
   pistolHitDebugMarker,
   getWireman,
+  playPistolFireSound,
 }) {
   const {
     INVENTORY_MAX_ITEMS,
@@ -419,6 +420,7 @@ export function createPistolSystem({
     pistolRecoilAmount = Math.min(1, pistolRecoilAmount + 1);
     randomizePistolMuzzleFlashFrame();
     pistolMuzzleFlashRemaining = PISTOL_MUZZLE_FLASH_DURATION;
+    playPistolFireSound?.();
 
     const hit = performPistolHitScan(
       options?.direction || null,
