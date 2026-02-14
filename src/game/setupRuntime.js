@@ -2,7 +2,6 @@ export function createRuntime({
   THREE,
   PointerLockControls,
   GLTFLoader,
-  Stats,
   EffectComposer,
   SMAAPass,
   N8AOPass,
@@ -64,11 +63,6 @@ export function createRuntime({
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   dom.app.append(renderer.domElement);
 
-  const stats = new Stats();
-  stats.showPanel(0);
-  stats.dom.style.zIndex = "6";
-  document.body.append(stats.dom);
-
   const composer = new EffectComposer(renderer);
   const n8aoPass = new N8AOPass(scene, camera, window.innerWidth, window.innerHeight);
   const smaaPass = new SMAAPass(
@@ -107,7 +101,7 @@ export function createRuntime({
     map: bulletDecalTexture,
     color: 0xa3a3a3,
     transparent: true,
-    alphaTest: 0.2,
+    alphaTest: 0.0,
     depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: -4,
@@ -413,7 +407,6 @@ export function createRuntime({
     camera,
     topDownCamera,
     renderer,
-    stats,
     composer,
     n8aoPass,
     smaaPass,

@@ -7,19 +7,20 @@ export function createRenderGameToText({
   constants,
   camera,
   controls,
-  keyState,
   getFlags,
   world,
   inventory,
   melee,
   pistol,
   health,
+  wireman,
   flashlightState,
   isFlashlightEmissionActive,
   isFlashlightSuppressedByTwoHandedBat,
 }) {
   const {
     PLAYER_MAX_HEALTH,
+    PLAYER_MAX_STAMINA,
     INVENTORY_ROTATION_STEP_DEGREES,
     JERKY_ITEM_ID,
     FIRST_AID_KIT_ITEM_ID,
@@ -56,6 +57,8 @@ export function createRenderGameToText({
     const activeJerkyConsume =
       healthState.jerkyConsumeActive && healthState.consumableUseItemId === JERKY_ITEM_ID;
     const healthRatio = PLAYER_MAX_HEALTH > 0 ? healthState.playerHealth / PLAYER_MAX_HEALTH : 0;
+    const staminaRatio = PLAYER_MAX_STAMINA > 0 ? healthState.playerStamina / PLAYER_MAX_STAMINA : 0;
+    const wiremanState = wireman?.getState?.() || null;
     const lastPistolHitPayload = pistolState.lastPistolHitInfo
       ? {
           ...pistolState.lastPistolHitInfo,
@@ -91,7 +94,7 @@ export function createRenderGameToText({
         flashlightOn: isFlashlightEmissionActive(),
         flashlightSuppressedByTwoHandedBat: isFlashlightSuppressedByTwoHandedBat(),
         flashlightModelLoaded: flashlightState.flashlightModelLoaded,
-        sprinting: keyState.sprint,
+        sprinting: healthState.staminaSprintActive,
         meleeSwinging: meleeState.meleeSwingActive,
         meleeCooldownSeconds: round(meleeState.meleeCooldownRemaining),
         playerDead: healthState.playerHealth <= 0,
@@ -108,6 +111,7 @@ export function createRenderGameToText({
         sodaBoostSeconds: round(healthState.sodaSpeedBoostRemaining),
         firstAidRegenSeconds: round(healthState.firstAidRegenRemaining),
         speedMultiplier: round(health.getPlayerSpeedMultiplier()),
+        lowStaminaHeartbeatBoost: healthState.lowStaminaHeartbeatBoostActive,
       },
       health: {
         current: round(healthState.playerHealth),
@@ -119,6 +123,13 @@ export function createRenderGameToText({
           (PLAYER_MAX_HEALTH > 0 ? healthState.playerHealthDamageTrail / PLAYER_MAX_HEALTH : 0) * 100,
         ),
       },
+      stamina: {
+        current: round(healthState.playerStamina),
+        max: PLAYER_MAX_STAMINA,
+        ratio: round(staminaRatio),
+        percent: round(staminaRatio * 100),
+        regenDelaySeconds: round(healthState.staminaRegenDelayRemaining),
+      },
       ammo: {
         bulletCount: bulletAmmoCount,
         pistolInfinite: pistolState.pistolInfiniteAmmo,
@@ -129,6 +140,29 @@ export function createRenderGameToText({
       pistol: {
         lastHit: lastPistolHitPayload,
       },
+      wireman: wiremanState
+        ? {
+            loaded: Boolean(wiremanState.loaded),
+            loadFailed: Boolean(wiremanState.loadFailed),
+            moving: Boolean(wiremanState.moving),
+            sprinting: Boolean(wiremanState.sprinting),
+            lineOfSightToPlayer: Boolean(wiremanState.lineOfSightToPlayer),
+            animation: wiremanState.animation || null,
+            position: wiremanState.position
+              ? {
+                  x: round(wiremanState.position.x),
+                  y: round(wiremanState.position.y),
+                  z: round(wiremanState.position.z),
+                }
+              : null,
+            cell: wiremanState.cell || null,
+            pathLength: wiremanState.pathLength ?? 0,
+            pathIndex: wiremanState.pathIndex ?? 0,
+            goalCell: wiremanState.goalCell || null,
+            distanceToPlayer: round(wiremanState.distanceToPlayer || 0),
+            distanceToGoal: round(wiremanState.distanceToGoal || 0),
+          }
+        : null,
       inventory: inventory.getInventory().flatMap((item, index) =>
         item
           ? [

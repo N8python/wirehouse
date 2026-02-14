@@ -36,5 +36,4 @@ export const TWO_PI = Math.PI * 2;
 export const FLASHLIGHT_BOUNCE_EMA_HALF_LIFE = 0.05;
 export const FLASHLIGHT_BOUNCE_POSITION_EMA_HALF_LIFE = 0.01;
 
-export const GAMEPLAY_HINT =
-  "Use WASD to move. Press V for top-down view, L for flashlight, left-click to attack/fire, hold left-click to consume selected jerky/first aid/soda, and T for test damage (P toggles pistol debug).";
+export const GAMEPLAY_HINT = "";

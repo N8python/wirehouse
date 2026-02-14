@@ -2,7 +2,6 @@ import * as THREE from "three";
 import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { DecalGeometry } from "three/addons/geometries/DecalGeometry.js";
-import Stats from "three/addons/libs/stats.module.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { SMAAPass } from "three/addons/postprocessing/SMAAPass.js";
 import {
@@ -30,6 +29,7 @@ import { createInventorySystem } from "./systems/inventorySystem.js";
 import { createHealthConsumableSystem } from "./systems/healthConsumableSystem.js";
 import { createPistolSystem } from "./systems/pistolSystem.js";
 import { createMeleeSystem } from "./systems/meleeSystem.js";
+import { createWiremanSystem } from "./systems/wiremanSystem.js";
 import { createRenderGameToText } from "./renderGameToText.js";
 import { configureDebugApis } from "./debugApi.js";
 
@@ -39,12 +39,15 @@ THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 export function createGameApp() {
   const dom = getDomRefs();
-  const constants = createGameConstants({ THREE, cellSize: config.CELL_SIZE });
+  const constants = createGameConstants({
+    THREE,
+    cellSize: config.CELL_SIZE,
+    playerSpeed: config.PLAYER_SPEED,
+  });
   const runtime = createRuntime({
     THREE,
     PointerLockControls,
     GLTFLoader,
-    Stats,
     EffectComposer,
     SMAAPass,
     N8AOPass,
@@ -150,6 +153,7 @@ export function createGameApp() {
     pistolHitDebugMarker: runtime.pistolHitDebugMarker,
   });
   inventory = createInventorySystem({
+    THREE,
     dom,
     constants,
     pickupSystem: runtime.pickupSystem,
@@ -222,8 +226,17 @@ export function createGameApp() {
       flashlightEnabled && !inventory.isFlashlightSuppressedByTwoHandedBat(),
     setStatus,
   });
+  const wireman = createWiremanSystem({
+    THREE,
+    GLTFLoader,
+    scene: runtime.scene,
+    camera: runtime.camera,
+    world,
+    config,
+    constants,
+  });
 
-  function regenerateMaze() {
+  function regenerateMaze({ silent = false } = {}) {
     hasWon = false;
     gameActive = false;
     isTopDownView = false;
@@ -238,7 +251,10 @@ export function createGameApp() {
     pistol.reset();
     inventory.reset();
     world.regenerateMaze();
-    setStatus("New maze generated.");
+    wireman.onMazeRegenerated();
+    if (!silent) {
+      setStatus("New maze generated.");
+    }
   }
 
   function render() {
@@ -278,7 +294,13 @@ export function createGameApp() {
   function update(deltaSeconds) {
     elapsed += deltaSeconds;
     health.updateConsumableEffects(deltaSeconds, getFlags());
-    health.updateHealthHeartBeatVisual(elapsed);
+    const hasMovementInput = keyState.forward || keyState.backward || keyState.left || keyState.right;
+    const staminaCanChange = gameActive && !hasWon && !isTopDownView;
+    const sprintActive = health.updateStamina(deltaSeconds, {
+      wantsSprint: staminaCanChange && hasMovementInput && keyState.sprint,
+      allowRegeneration: staminaCanChange,
+    });
+    health.updateHealthHeartBeatVisual(elapsed, { isSprinting: sprintActive });
     health.updateHealthDamageTrail(deltaSeconds);
     health.updateJerkyConsume(deltaSeconds, getFlags());
     flashlight.updateFlashlightFlicker(deltaSeconds, { isTopDownView });
@@ -291,9 +313,16 @@ export function createGameApp() {
     playerView.updatePlayerMovement(deltaSeconds, {
       gameActive,
       keyState,
+      isSprintActive: sprintActive,
       getPlayerSpeedMultiplier: health.getPlayerSpeedMultiplier,
     });
-    playerView.updateViewBobbing(deltaSeconds, { gameActive, hasWon, isTopDownView, keyState });
+    playerView.updateViewBobbing(deltaSeconds, {
+      gameActive,
+      hasWon,
+      isTopDownView,
+      isSprintActive: sprintActive,
+    });
+    wireman.update(deltaSeconds, { gameActive, hasWon, isTopDownView });
     melee.updateMeleeAttack(deltaSeconds);
     health.updateConsumableUseVisuals(elapsed);
     pistol.update(deltaSeconds, { gameActive, isTopDownView });
@@ -318,7 +347,6 @@ export function createGameApp() {
     update(delta);
     render();
     mazePerf.renderedFrames += 1;
-    runtime.stats.update();
   }
 
   function activateGameplay() {
@@ -381,6 +409,21 @@ export function createGameApp() {
     );
   }
 
+  function teleportPlayerToWireman() {
+    const wiremanState = wireman.getState();
+    if (!wiremanState?.loaded || !wiremanState.position) {
+      setStatus("Wireman not loaded yet.");
+      return;
+    }
+    runtime.camera.position.set(
+      wiremanState.position.x,
+      config.PLAYER_HEIGHT,
+      wiremanState.position.z,
+    );
+    inventory.updatePickupPrompt();
+    setStatus("Teleported player to Wireman.");
+  }
+
   function onKeyDown(event) {
     const code = event.code;
     if (code === "ArrowLeft" || code === "ArrowRight" || code === "Space") {
@@ -396,9 +439,11 @@ export function createGameApp() {
     if (code === "KeyF") void toggleFullscreen();
     if (code === "KeyL") toggleFlashlight();
     if (code === "KeyV") toggleTopDownView();
+    if (code === "Slash") teleportPlayerToWireman();
     if (code === "KeyO") toggleN8AODebugView();
     if (code === "KeyN") regenerateMaze();
     if (code === "KeyE") inventory.tryPickupNearest();
+    if (code === "KeyQ") void inventory.dropSelectedItem();
     if (code === "KeyI") inventory.grantDebugInventory();
     if (code === "KeyU") {
       runtime.heldItemAmbientFillLight.intensity =
@@ -474,13 +519,13 @@ export function createGameApp() {
     constants,
     camera: runtime.camera,
     controls: runtime.controls,
-    keyState,
     getFlags,
     world,
     inventory,
     melee,
     pistol,
     health,
+    wireman,
     flashlightState: runtime.flashlightState,
     isFlashlightEmissionActive: () => flashlightEnabled && !inventory.isFlashlightSuppressedByTwoHandedBat(),
     isFlashlightSuppressedByTwoHandedBat: inventory.isFlashlightSuppressedByTwoHandedBat,
@@ -548,9 +593,8 @@ export function createGameApp() {
   }
 
   world.createFloorAndCeiling();
-  regenerateMaze();
+  regenerateMaze({ silent: true });
   setupInteractions();
-  setStatus("Click Enter Maze to begin exploring.");
   inventory.initInventoryRadial();
   heldItemDisplay.init();
   inventory.updateInventoryHud();

@@ -14,6 +14,12 @@ export function createHealthConsumableSystem({
 }) {
   const {
     PLAYER_MAX_HEALTH,
+    PLAYER_MAX_STAMINA,
+    PLAYER_SPRINT_STAMINA_DRAIN_PER_SECOND,
+    PLAYER_STAMINA_REGEN_DELAY_SECONDS,
+    PLAYER_STAMINA_REGEN_PER_SECOND,
+    STAMINA_LOW_HEARTBEAT_THRESHOLD_RATIO,
+    STAMINA_LOW_SPRINT_HEARTBEAT_FREQUENCY_MULTIPLIER,
     HEALTH_DAMAGE_TRAIL_DECAY_RATE,
     HEALTH_DAMAGE_TRAIL_MIN_DELTA,
     HEALTH_DAMAGE_TRAIL_HOLD_SECONDS,
@@ -44,6 +50,7 @@ export function createHealthConsumableSystem({
     healthRingFill,
     healthRingLoss,
     healthHeartImage,
+    healthHeartStaminaImage,
     consumeProgress,
     consumeProgressFill,
     consumeProgressLabel,
@@ -54,6 +61,10 @@ export function createHealthConsumableSystem({
   } = dom;
 
   let playerHealth = PLAYER_MAX_HEALTH;
+  let playerStamina = PLAYER_MAX_STAMINA;
+  let staminaRegenDelayRemaining = 0;
+  let staminaSprintActive = false;
+  let lowStaminaHeartbeatBoostActive = false;
   let playerHealthDamageTrail = PLAYER_MAX_HEALTH;
   let playerHealthDamageTrailHoldRemaining = 0;
   let jerkyConsumeActive = false;
@@ -66,6 +77,11 @@ export function createHealthConsumableSystem({
 
   function reset() {
     setPlayerHealth(PLAYER_MAX_HEALTH);
+    playerStamina = PLAYER_MAX_STAMINA;
+    staminaRegenDelayRemaining = 0;
+    staminaSprintActive = false;
+    lowStaminaHeartbeatBoostActive = false;
+    updateStaminaHud();
     cancelJerkyConsume();
     firstAidRegenRemaining = 0;
     sodaSpeedBoostRemaining = 0;
@@ -77,6 +93,24 @@ export function createHealthConsumableSystem({
       return playerHealth;
     }
     return Math.max(0, Math.min(PLAYER_MAX_HEALTH, value));
+  }
+
+  function clampPlayerStamina(value) {
+    if (!Number.isFinite(value)) {
+      return playerStamina;
+    }
+    return Math.max(0, Math.min(PLAYER_MAX_STAMINA, value));
+  }
+
+  function updateStaminaHud() {
+    const staminaRatio = PLAYER_MAX_STAMINA > 0 ? playerStamina / PLAYER_MAX_STAMINA : 0;
+    const staminaPercent = Math.max(0, Math.min(100, staminaRatio * 100));
+    if (healthHeartStaminaImage) {
+      healthHeartStaminaImage.style.setProperty(
+        "--stamina-heart-gray-bottom-inset",
+        `${staminaPercent.toFixed(3)}%`,
+      );
+    }
   }
 
   function updateHealthHud() {
@@ -131,6 +165,42 @@ export function createHealthConsumableSystem({
     playerHealthDamageTrail =
       nextTrail - playerHealth <= HEALTH_DAMAGE_TRAIL_MIN_DELTA ? playerHealth : nextTrail;
     updateHealthHud();
+  }
+
+  function updateStamina(deltaSeconds, { wantsSprint = false, allowRegeneration = true } = {}) {
+    const clampedDeltaSeconds = Math.max(0, Number(deltaSeconds) || 0);
+    const sprintRequested = Boolean(wantsSprint);
+    const canSprintThisFrame = sprintRequested && playerStamina > 0 && clampedDeltaSeconds > 0;
+    let staminaDecreased = false;
+
+    if (canSprintThisFrame) {
+      const previousStamina = playerStamina;
+      playerStamina = clampPlayerStamina(
+        playerStamina - PLAYER_SPRINT_STAMINA_DRAIN_PER_SECOND * clampedDeltaSeconds,
+      );
+      staminaDecreased = playerStamina < previousStamina;
+    }
+
+    if (staminaDecreased) {
+      staminaRegenDelayRemaining = PLAYER_STAMINA_REGEN_DELAY_SECONDS;
+    } else if (allowRegeneration && staminaRegenDelayRemaining > 0) {
+      staminaRegenDelayRemaining = Math.max(0, staminaRegenDelayRemaining - clampedDeltaSeconds);
+    }
+
+    if (
+      allowRegeneration &&
+      !sprintRequested &&
+      staminaRegenDelayRemaining <= 0 &&
+      playerStamina < PLAYER_MAX_STAMINA
+    ) {
+      playerStamina = clampPlayerStamina(
+        playerStamina + PLAYER_STAMINA_REGEN_PER_SECOND * clampedDeltaSeconds,
+      );
+    }
+
+    staminaSprintActive = canSprintThisFrame;
+    updateStaminaHud();
+    return staminaSprintActive;
   }
 
   function getActiveConsumableUseProgress() {
@@ -376,11 +446,21 @@ export function createHealthConsumableSystem({
     return amplitude * gaussian;
   }
 
-  function updateHealthHeartBeatVisual(elapsed) {
-    if (!healthHeartImage) {
+  function updateHealthHeartBeatVisual(elapsed, { isSprinting = false } = {}) {
+    if (!healthHeartImage && !healthHeartStaminaImage) {
+      lowStaminaHeartbeatBoostActive = false;
       return;
     }
-    const phase = (elapsed % HEALTH_HEARTBEAT_CYCLE_SECONDS) / HEALTH_HEARTBEAT_CYCLE_SECONDS;
+    const staminaRatio = PLAYER_MAX_STAMINA > 0 ? playerStamina / PLAYER_MAX_STAMINA : 0;
+    const lowStaminaSprint =
+      Boolean(isSprinting) && staminaRatio <= STAMINA_LOW_HEARTBEAT_THRESHOLD_RATIO;
+    lowStaminaHeartbeatBoostActive = lowStaminaSprint;
+    const heartbeatFrequencyScale = lowStaminaSprint
+      ? STAMINA_LOW_SPRINT_HEARTBEAT_FREQUENCY_MULTIPLIER
+      : 1;
+    const phase =
+      ((elapsed * heartbeatFrequencyScale) % HEALTH_HEARTBEAT_CYCLE_SECONDS) /
+      HEALTH_HEARTBEAT_CYCLE_SECONDS;
     const beatScale =
       1 +
       evaluateHeartbeatPulse(phase, HEALTH_HEARTBEAT_PRIMARY_TIME, HEALTH_HEARTBEAT_PRIMARY_AMPLITUDE) +
@@ -389,7 +469,13 @@ export function createHealthConsumableSystem({
         HEALTH_HEARTBEAT_SECONDARY_TIME,
         HEALTH_HEARTBEAT_SECONDARY_AMPLITUDE,
       );
-    healthHeartImage.style.transform = `scale(${beatScale.toFixed(4)})`;
+    const transform = `scale(${beatScale.toFixed(4)})`;
+    if (healthHeartImage) {
+      healthHeartImage.style.transform = transform;
+    }
+    if (healthHeartStaminaImage) {
+      healthHeartStaminaImage.style.transform = transform;
+    }
   }
 
   function applyPlayerDamage(amount, sourceLabel = "damage") {
@@ -413,6 +499,10 @@ export function createHealthConsumableSystem({
     return {
       playerHealth,
       playerHealthDamageTrail,
+      playerStamina,
+      staminaRegenDelayRemaining,
+      staminaSprintActive,
+      lowStaminaHeartbeatBoostActive,
       jerkyConsumeActive,
       jerkyConsumeElapsed,
       consumableUseItemId,
@@ -427,6 +517,7 @@ export function createHealthConsumableSystem({
     updateHealthHud,
     setPlayerHealth,
     updateHealthDamageTrail,
+    updateStamina,
     getActiveConsumableUseProgress,
     getJerkyConsumeProgress,
     getPlayerSpeedMultiplier,

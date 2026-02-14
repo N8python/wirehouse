@@ -45,7 +45,12 @@ export function createPlayerViewSystem({
     inventoryLeftHandRig.rotation.copy(LEFT_HAND_RIG_BASE_ROTATION);
   }
 
-  function updatePlayerMovement(deltaSeconds, { gameActive, keyState, getPlayerSpeedMultiplier }) {
+  function updatePlayerMovement(deltaSeconds, {
+    gameActive,
+    keyState,
+    isSprintActive,
+    getPlayerSpeedMultiplier,
+  }) {
     if (!gameActive) {
       movementBobSignal = 0;
       return;
@@ -73,8 +78,7 @@ export function createPlayerViewSystem({
       move.normalize();
     }
 
-    const speed =
-      PLAYER_SPEED * (keyState.sprint ? SPRINT_MULTIPLIER : 1) * getPlayerSpeedMultiplier();
+    const speed = PLAYER_SPEED * (isSprintActive ? SPRINT_MULTIPLIER : 1) * getPlayerSpeedMultiplier();
     const stepX = move.x * speed * deltaSeconds;
     const stepZ = move.z * speed * deltaSeconds;
     const current = camera.position;
@@ -91,7 +95,7 @@ export function createPlayerViewSystem({
     movementBobSignal = THREE.MathUtils.clamp(movedDistance / maxDisplacement, 0, 1);
   }
 
-  function updateViewBobbing(deltaSeconds, { gameActive, hasWon, isTopDownView, keyState }) {
+  function updateViewBobbing(deltaSeconds, { gameActive, hasWon, isTopDownView, isSprintActive }) {
     const bobAllowed = gameActive && !hasWon && !isTopDownView;
     if (!bobAllowed) {
       viewBobBlend = 0;
@@ -100,7 +104,7 @@ export function createPlayerViewSystem({
         (movementBobSignal - viewBobBlend) * Math.min(1, deltaSeconds * VIEW_BOB_SMOOTHING);
 
       if (viewBobBlend > 0.0005) {
-        const sprintScale = keyState.sprint ? 1.2 : 1;
+        const sprintScale = isSprintActive ? 1.2 : 1;
         viewBobPhase +=
           deltaSeconds *
           VIEW_BOB_BASE_FREQUENCY *
@@ -109,7 +113,7 @@ export function createPlayerViewSystem({
       }
     }
 
-    const sprintAmplitudeScale = keyState.sprint && bobAllowed ? 1.2 : 1;
+    const sprintAmplitudeScale = isSprintActive && bobAllowed ? 1.2 : 1;
     const amplitude = VIEW_BOB_BASE_AMPLITUDE * viewBobBlend * sprintAmplitudeScale;
     const bobY = Math.sin(viewBobPhase * 2.0) * amplitude;
     const bobX = Math.cos(viewBobPhase) * amplitude * 0.45;

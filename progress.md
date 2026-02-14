@@ -554,3 +554,135 @@ Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedu
 - Notes / TODO:
   - `package.json` remains `"type": "commonjs"` while browser code is ESM; this is unchanged from prior state but makes Node-based static checks noisy.
   - Could add lightweight browser CI smoke test script using the same SwiftShader flags to guard against future wiring regressions.
+- Removed top-of-screen debug/status text:
+  - Removed `Stats.js` FPS overlay creation + per-frame updates (`src/game/setupRuntime.js`, `src/game/app.js`).
+  - Cleared the default top status hint (`GAMEPLAY_HINT` now empty) and removed the startup "Click Enter Maze..." status assignment.
+  - Made initial startup maze generation silent so no "New maze generated." status text appears on first load (manual `N` regenerate still reports status).
+- Validation for top-text removal:
+  - Ran develop-web-game Playwright client: `node /Users/natebreslow/.codex/skills/develop-web-game/scripts/web_game_playwright_client.js --url http://127.0.0.1:4173/index.html --click "10,10" --iterations 1 --pause-ms 120 --screenshot-dir output/debug-overlay-removal`.
+  - Verified `/Users/natebreslow/Documents/analogHorrorAtHome/output/debug-overlay-removal/shot-0.png` has no white debug/status text at the top.
+- Health HUD sizing update (heart/radial fit):
+  - Refactored `#health-wheel` CSS to use ring geometry variables (`--health-ring-inset`, `--health-ring-thickness`).
+  - Set `#health-center` inset to `ring inset + ring thickness`, making the center circle match the radial ring’s exact inner diameter.
+  - Set `#health-heart-image` to fill that center (`width/height: 100%`) with circular clipping via `#health-center`.
+- Validation:
+  - Ran develop-web-game Playwright capture into `output/health-center-size/`.
+  - Verified visual result in `/Users/natebreslow/Documents/analogHorrorAtHome/output/health-center-size/shot-0.png`.
+- Added stamina system tied to sprint:
+  - New stamina constants in `src/game/constants.js`:
+    - `PLAYER_MAX_STAMINA = 100`
+    - `PLAYER_SPRINT_DURATION_SECONDS = 7`
+    - `PLAYER_SPRINT_STAMINA_DRAIN_PER_SECOND = 100/7`
+    - `PLAYER_STAMINA_REGEN_DELAY_SECONDS = 3`
+    - `PLAYER_STAMINA_REGEN_PER_SECOND = 100/7`
+    - low-stamina heartbeat tuning constants.
+  - `src/game/systems/healthConsumableSystem.js` now tracks stamina state (`playerStamina`, regen delay, active sprint flag), drains while sprinting, and only regenerates after stamina has not decreased for 3 seconds.
+  - `src/game/app.js` now computes actual sprint activity from movement input + stamina (`health.updateStamina`) and feeds that into movement, bobbing, and heartbeat updates.
+  - `src/game/systems/playerViewSystem.js` now uses `isSprintActive` (actual sprint state) for speed multiplier and sprint bob scaling.
+- Added stamina visualization on heart HUD:
+  - `index.html` now layers a second heart image (`#health-heart-image-stamina`) with grayscale filter.
+  - The overlay is clipped from the bottom using `--stamina-heart-gray-bottom-inset`, so the top `(100 - stamina%)` of the heart is gray.
+  - Example behavior: at 70% stamina, clip is `inset(... 70%)` so top 30% is gray.
+  - Wired DOM ref in `src/game/domRefs.js` and updates in `healthConsumableSystem.updateStaminaHud()`.
+- Added requested heartbeat behavior:
+  - When sprinting and stamina is below 20%, heartbeat frequency is significantly increased (`STAMINA_LOW_SPRINT_HEARTBEAT_FREQUENCY_MULTIPLIER = 2.8`).
+  - Heartbeat transform is applied to both base and stamina-overlay heart images so pulse remains synced.
+- Extended `render_game_to_text` telemetry:
+  - `flags.sprinting` now reports actual stamina-backed sprinting.
+  - Added `flags.lowStaminaHeartbeatBoost`.
+  - Added `stamina` object (`current`, `max`, `ratio`, `percent`, `regenDelaySeconds`).
+- Validation:
+  - Skill client run:
+    - `output/stamina-system/shot-0.png`, `output/stamina-system/shot-1.png`
+    - `output/stamina-system/state-0.json`, `output/stamina-system/state-1.json`
+    - no `errors-*.json` produced.
+  - Deterministic sprint/regen validation (Playwright + `window.advanceTime`) in `output/stamina-system-validation/stamina-report.json`:
+    - after 3.5s sprint: stamina `50`
+    - after 7.0s sprint: stamina `0`
+    - after 2.0s rest: stamina still `0` (regen not started)
+    - after 3.2s rest: stamina `5.952` (regen started after 3s delay)
+    - low-stamina sprint heartbeat boost flag true at depleted sprint state.
+  - Visual stamina-mask checks:
+    - `output/stamina-system-validation/after-7s-sprint.png` (heart fully gray at 0 stamina)
+    - `output/stamina-system-validation/at-70-stamina.png` + `at-70-stamina.json` (70% stamina, top 30% gray via `clipPath: inset(... 70%)`).
+- Added inventory drop action on `Q`:
+  - `src/game/app.js` now binds `KeyQ` to `inventory.dropSelectedItem()`.
+  - `index.html` controls overlay now includes `Drop selected item: Q`.
+- Implemented drop flow in `src/game/systems/inventorySystem.js`:
+  - Added `dropSelectedItem()`.
+  - Drops the currently selected item in front of the player (camera-forward, slight lateral jitter), removes it from the selected slot, updates HUD/prompt, and posts a status message.
+- Implemented world re-spawn API in `src/world/pickups.js`:
+  - Added `dropItemById(id, position)` to spawn a pickup instance back into the scene at a target location.
+  - Added `instantiatePickupFromTemplate(...)` helper so dropped pickups match normal pickups (scale range, ground placement, bob animation metadata).
+- Validation:
+  - develop-web-game skill client smoke run:
+    - `output/drop-item-skill/shot-0.png`
+    - `output/drop-item-skill/state-0.json`
+    - no `errors-*.json` produced.
+  - Deterministic drop/pickup validation (`output/drop-item-validation/drop-report.json`):
+    - inventory count `8 -> 7` after `Q` drop,
+    - inventory count `7 -> 8` after `E` pickup,
+    - selected item dropped/picked back (`knife_01`),
+    - status text confirms pickup,
+    - no console/page errors.
+  - Screenshot: `output/drop-item-validation/after-drop-and-pickup.png`.
+- Added first-pass Wireman enemy follow system (`assets/models/wireman.glb`):
+  - New system: `src/game/systems/wiremanSystem.js`.
+  - Loads model from `./assets/models/wireman.glb`, normalizes scale/grounding, builds animation mixer, and maps clip roles by name (`idle`, `walk`, `run`, `sprint`, `attack`).
+  - Added A* grid pathfinding in the Wireman system and repath timer to follow a target cell behind the player.
+  - Wireman uses walk locomotion while moving and idle when within trailing stop distance.
+- Integration:
+  - `src/game/app.js` now creates the Wireman system, updates it each frame, and resets/respawns it on maze regeneration.
+  - `src/game/constants.js` now includes wireman tuning constants (model path, walk speed, repath interval, follow distances, waypoint threshold, search radius, rotation speed, yaw offset).
+  - `src/game/renderGameToText.js` now includes `wireman` telemetry (loaded/moving/animation/position/cell/path/goal/distances) for deterministic testing.
+- Validation:
+  - develop-web-game client run:
+    - `output/wireman-skill/shot-0.png`
+    - `output/wireman-skill/shot-1.png`
+    - `output/wireman-skill/state-0.json`
+    - `output/wireman-skill/state-1.json`
+    - no `errors-*.json` emitted.
+  - Deterministic gameplay/pathing validation (`output/wireman-validation/wireman-report.json`):
+    - `wireman.loaded=true`, `wireman.moving=true`, `animation="walk"`.
+    - player moved `~12.94` world units while wireman moved `~9.15` units.
+    - `wireman.distanceToGoal` decreased (`-1.372`), confirming pursuit toward behind-player A* target.
+    - no console/page errors.
+  - Visual capture during follow run:
+    - `output/wireman-validation/topdown-wireman.png`.
+- Updated Wireman target behavior to track player position directly (not behind-player offset):
+  - Removed behind-offset targeting in `src/game/systems/wiremanSystem.js`.
+  - Wireman now computes goal cell from current player world position and paths directly to that cell.
+  - Removed unused `WIREMAN_FOLLOW_OFFSET_DISTANCE` constant from `src/game/constants.js`.
+- Validation:
+  - `output/wireman-target-player-validation/wireman-target-player-report.json` confirms `afterGoalMatchesPlayer=true` with `wireman.goalCell == playerCell` and wireman movement > 0.
+  - Top-down capture: `output/wireman-target-player-validation/topdown-wireman-target-player.png`.
+- Added debug teleport key (`/`):
+  - `src/game/app.js` now handles `Key code: "Slash"` and teleports player camera to Wireman's current position.
+  - Added helper `teleportPlayerToWireman()` with loaded-state guard and status text.
+  - Updated controls overlay in `index.html` to document `/` as "Teleport to Wireman".
+- Validation:
+  - develop-web-game skill smoke run:
+    - `output/teleport-wireman-skill/shot-0.png`
+    - `output/teleport-wireman-skill/state-0.json`
+  - Deterministic check:
+    - `output/teleport-wireman-validation/teleport-report.json`
+    - confirms player-to-wireman distance changed from `~73.813` to `0` after pressing `/`.
+    - status text: `Teleported player to Wireman.`
+    - no console/page errors.
+  - Screenshot: `output/teleport-wireman-validation/after-teleport.png`.
+- Synced wireman movement speed with player base speed:
+  - `src/game/constants.js`: `WIREMAN_WALK_SPEED` now derives from `playerSpeed` input.
+  - `src/game/app.js`: `createGameConstants` now passes `playerSpeed: config.PLAYER_SPEED`.
+  - Result: wireman and player base speeds stay matched automatically if `PLAYER_SPEED` is retuned.
+- Skipped Playwright validation for this change per user request.
+- Wireman LOS sprint behavior:
+  - Added `WIREMAN_SPRINT_MULTIPLIER = 1.5` in `src/game/constants.js`.
+  - Kept nerfed base speed `WIREMAN_WALK_SPEED = playerSpeed * 0.75`, so LOS sprint speed is now `1.5 * 0.75 * playerSpeed`.
+  - Updated `src/game/systems/wiremanSystem.js`:
+    - Added direct line-of-sight check from Wireman to player using sampled world-space walkability.
+    - If LOS is clear, Wireman bypasses A* waypoint following and sprints directly at player.
+    - If LOS is blocked, Wireman resumes normal A* pathing at walk speed.
+    - Animation switches to `sprint` while LOS sprinting, otherwise `walk`/`idle`.
+    - Added state flags: `sprinting` and `lineOfSightToPlayer`.
+  - Updated `src/game/renderGameToText.js` to expose Wireman `sprinting` and `lineOfSightToPlayer` telemetry.
+- Skipped Playwright validation for this iteration.

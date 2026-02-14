@@ -315,6 +315,39 @@ export function createPickupSystem({
     return templatePromiseByPath.get(entry.path);
   }
 
+  function instantiatePickupFromTemplate(entry, template, { x, z, rotationY = null }) {
+    const pickup = template.clone(true);
+    const baseSize = template.userData.baseSize || 1;
+    const desiredSize = randomBetween(entry.desiredSizeMin, entry.desiredSizeMax);
+    const uniformScale = desiredSize / baseSize;
+    pickup.scale.setScalar(uniformScale);
+
+    pickup.position.set(x, 0, z);
+    pickup.rotation.y = Number.isFinite(rotationY) ? rotationY : randomBetween(0, Math.PI * 2);
+    pickup.updateMatrixWorld(true);
+    const spawnBox = new THREE.Box3().setFromObject(pickup);
+    if (!spawnBox.isEmpty()) {
+      const pickupHeight = Math.max(spawnBox.max.y - spawnBox.min.y, 0.001);
+      const groundClearance = Math.max(0.004, pickupHeight * 0.015);
+      pickup.position.y += groundClearance - spawnBox.min.y;
+    } else {
+      pickup.position.y = Math.max(0.01, desiredSize * 0.02);
+    }
+    pickup.userData.pickupId = entry.id;
+    pickup.userData.pickupName = entry.name;
+
+    const phase = Math.random() * Math.PI * 2;
+    const bobAmplitude = randomBetween(0.02, 0.05);
+    return {
+      object: pickup,
+      id: entry.id,
+      name: entry.name,
+      baseY: pickup.position.y,
+      phase,
+      bobAmplitude,
+    };
+  }
+
   async function regenerate({ maze, startCell, exitCell }) {
     generationToken += 1;
     const token = generationToken;
@@ -360,12 +393,6 @@ export function createPickupSystem({
         continue;
       }
 
-      const pickup = template.clone(true);
-      const baseSize = template.userData.baseSize || 1;
-      const desiredSize = randomBetween(choice.desiredSizeMin, choice.desiredSizeMax);
-      const uniformScale = desiredSize / baseSize;
-      pickup.scale.setScalar(uniformScale);
-
       const x =
         anchor.col * cellSize -
         worldHalfWidth +
@@ -376,32 +403,9 @@ export function createPickupSystem({
         worldHalfDepth +
         cellSize * 0.5 +
         randomBetween(-jitter, jitter);
-      pickup.position.set(x, 0, z);
-      pickup.rotation.y = randomBetween(0, Math.PI * 2);
-      pickup.updateMatrixWorld(true);
-      const spawnBox = new THREE.Box3().setFromObject(pickup);
-      if (!spawnBox.isEmpty()) {
-        const pickupHeight = Math.max(spawnBox.max.y - spawnBox.min.y, 0.001);
-        const groundClearance = Math.max(0.004, pickupHeight * 0.015);
-        pickup.position.y += groundClearance - spawnBox.min.y;
-      } else {
-        pickup.position.y = Math.max(0.01, desiredSize * 0.02);
-      }
-      pickup.userData.pickupId = choice.id;
-      pickup.userData.pickupName = choice.name;
-
-      const phase = Math.random() * Math.PI * 2;
-      const bobAmplitude = randomBetween(0.02, 0.05);
-
-      activePickups.push({
-        object: pickup,
-        id: choice.id,
-        name: choice.name,
-        baseY: pickup.position.y,
-        phase,
-        bobAmplitude,
-      });
-      root.add(pickup);
+      const placedPickup = instantiatePickupFromTemplate(choice, template, { x, z });
+      activePickups.push(placedPickup);
+      root.add(placedPickup.object);
     }
   }
 
@@ -464,6 +468,42 @@ export function createPickupSystem({
     };
   }
 
+  async function dropItemById(id, position = {}) {
+    const entry = entryById.get(id);
+    if (!entry) {
+      return null;
+    }
+
+    let template;
+    try {
+      template = await loadTemplate(entry);
+    } catch {
+      return null;
+    }
+    if (!template) {
+      return null;
+    }
+
+    const margin = Math.max(0.4, cellSize * 0.45);
+    const minX = -worldHalfWidth + margin;
+    const maxX = worldHalfWidth - margin;
+    const minZ = -worldHalfDepth + margin;
+    const maxZ = worldHalfDepth - margin;
+    const requestedX = Number(position.x);
+    const requestedZ = Number(position.z);
+    const x = Number.isFinite(requestedX) ? THREE.MathUtils.clamp(requestedX, minX, maxX) : 0;
+    const z = Number.isFinite(requestedZ) ? THREE.MathUtils.clamp(requestedZ, minZ, maxZ) : 0;
+    const rotationY = Number(position.rotationY);
+
+    const droppedPickup = instantiatePickupFromTemplate(entry, template, { x, z, rotationY });
+    activePickups.push(droppedPickup);
+    root.add(droppedPickup.object);
+    return {
+      id: droppedPickup.id,
+      name: droppedPickup.name,
+    };
+  }
+
   function getIconDataUrlByItemId(id) {
     return iconDataUrlById.get(id) || null;
   }
@@ -510,6 +550,7 @@ export function createPickupSystem({
     update,
     findNearestPickup,
     pickupNearest,
+    dropItemById,
     getIconDataUrlByItemId,
     ensureIconForItemId,
     createDisplayModelForItemId,

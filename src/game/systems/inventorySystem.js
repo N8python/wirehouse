@@ -1,4 +1,5 @@
 export function createInventorySystem({
+  THREE,
   dom,
   constants,
   pickupSystem,
@@ -21,6 +22,9 @@ export function createInventorySystem({
   const inventorySlots = [];
   let inventoryWheelRotationSteps = 0;
   let inventorySelectionOutline = null;
+  const dropForward = new THREE.Vector3();
+  const dropRight = new THREE.Vector3();
+  const worldUp = new THREE.Vector3(0, 1, 0);
 
   function normalizeInventorySlotIndex(index) {
     return ((index % INVENTORY_MAX_ITEMS) + INVENTORY_MAX_ITEMS) % INVENTORY_MAX_ITEMS;
@@ -254,6 +258,49 @@ export function createInventorySystem({
     setStatus(`Picked up ${picked.name}.`);
   }
 
+  async function dropSelectedItem() {
+    const { gameActive, isTopDownView } = getFlags();
+    if (!gameActive || isTopDownView) {
+      return false;
+    }
+
+    const selectedSlotIndex = getSelectedInventorySlotIndex();
+    if (selectedSlotIndex < 0 || selectedSlotIndex >= INVENTORY_MAX_ITEMS) {
+      return false;
+    }
+    const selectedItem = inventory[selectedSlotIndex];
+    if (!selectedItem) {
+      setStatus("No selected item to drop.");
+      return false;
+    }
+
+    dropForward.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    dropForward.y = 0;
+    if (dropForward.lengthSq() < 0.000001) {
+      dropForward.set(0, 0, -1);
+    }
+    dropForward.normalize();
+    dropRight.crossVectors(dropForward, worldUp).normalize();
+
+    const dropDistance = 1.25;
+    const lateralJitter = (Math.random() - 0.5) * 0.24;
+    const dropPosition = {
+      x: camera.position.x + dropForward.x * dropDistance + dropRight.x * lateralJitter,
+      z: camera.position.z + dropForward.z * dropDistance + dropRight.z * lateralJitter,
+    };
+    const dropped = await pickupSystem.dropItemById(selectedItem.id, dropPosition);
+    if (!dropped) {
+      setStatus(`Could not drop ${selectedItem.name}.`);
+      return false;
+    }
+
+    inventory[selectedSlotIndex] = null;
+    updateInventoryHud();
+    updatePickupPrompt();
+    setStatus(`Dropped ${selectedItem.name}.`);
+    return true;
+  }
+
   function grantDebugInventory() {
     inventory.length = 0;
     for (const item of DEBUG_INVENTORY_ITEMS) {
@@ -290,6 +337,7 @@ export function createInventorySystem({
     updateInventoryHud,
     updatePickupPrompt,
     tryPickupNearest,
+    dropSelectedItem,
     grantDebugInventory,
     rotateInventoryWheel,
     setInventoryWheelRotationSteps,

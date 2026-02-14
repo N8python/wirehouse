@@ -11,6 +11,7 @@ export function getDomRefs() {
     healthRingFill: document.querySelector("#health-ring-fill"),
     healthRingLoss: document.querySelector("#health-ring-loss"),
     healthHeartImage: document.querySelector("#health-heart-image"),
+    healthHeartStaminaImage: document.querySelector("#health-heart-image-stamina"),
     consumeProgress: document.querySelector("#consume-progress"),
     consumeProgressFill: document.querySelector("#consume-progress-fill"),
     consumeProgressLabel: document.querySelector("#consume-progress-label"),
