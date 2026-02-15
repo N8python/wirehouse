@@ -212,13 +212,19 @@
         color: #cfd9e7;
       }
 
+      #overlay-actions {
+        margin-top: 1.15rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+      }
+
       .panel p {
         margin: 0.52rem 0 0;
         color: #d8deeb;
       }
 
       .panel button {
-        margin-top: 1.15rem;
         width: min(280px, 100%);
         padding: 0.78rem 1.2rem;
         border: 1px solid #7ea8cd7e;
@@ -236,6 +242,13 @@
           filter 120ms ease;
       }
 
+      .panel button:disabled {
+        cursor: wait;
+        opacity: 0.74;
+        filter: saturate(0.58);
+        box-shadow: none;
+      }
+
       .panel button:hover {
         transform: translateY(-1px);
         filter: brightness(1.08);
@@ -244,6 +257,17 @@
 
       .panel button:active {
         transform: translateY(0);
+      }
+
+      .panel button.secondary {
+        width: auto;
+        min-width: 168px;
+        border-color: #7c8fa95e;
+        background: linear-gradient(180deg, #273445, #1c2734);
+      }
+
+      .panel button.secondary:hover {
+        box-shadow: 0 8px 24px rgba(67, 92, 121, 0.3);
       }
 
       #overlay[data-mode="death"] .panel button {
@@ -266,6 +290,67 @@
 
       #overlay-controls.hidden {
         display: none;
+      }
+
+      #overlay-loading {
+        margin-top: 0.9rem;
+        min-height: 1.2rem;
+        color: #a8b9ce;
+        font-family: "Lucida Console", "Courier New", monospace;
+        font-size: 0.74rem;
+        letter-spacing: 0.08rem;
+        text-transform: uppercase;
+      }
+
+      #overlay-settings {
+        margin-top: 0.92rem;
+        padding: 0.88rem 0.92rem;
+        border: 1px solid #7f97b652;
+        border-radius: 10px;
+        background: rgba(8, 14, 22, 0.5);
+      }
+
+      #overlay-settings.hidden {
+        display: none;
+      }
+
+      #overlay-settings h2 {
+        margin: 0 0 0.65rem;
+        font-size: 0.88rem;
+        letter-spacing: 0.08rem;
+        text-transform: uppercase;
+        color: #d5e5f7;
+      }
+
+      .settings-row {
+        margin: 0.52rem 0 0;
+        display: grid;
+        gap: 0.35rem;
+      }
+
+      .settings-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.52rem;
+        color: #d6e1f0;
+        font-size: 0.84rem;
+      }
+
+      .settings-volume-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: #d6e1f0;
+        font-size: 0.82rem;
+      }
+
+      .settings-volume-label span:last-child {
+        font-family: "Lucida Console", "Courier New", monospace;
+        color: #a7c2df;
+      }
+
+      #overlay-settings input[type="range"] {
+        width: 100%;
       }
 
       #status {
@@ -652,7 +737,34 @@
           <p><strong>Use:</strong> Left Click (melee, fire, hold to consume) | <strong>Pickup:</strong> E | <strong>Drop:</strong> Q</p>
           <p><strong>Inventory:</strong> Left/Right Arrows | <strong>Flashlight:</strong> L | <strong>View:</strong> V | <strong>Fullscreen:</strong> F</p>
         </div>
-        <button id="start-btn" type="button">Enter Wirehouse</button>
+        <div id="overlay-settings" class="hidden">
+          <h2>Settings</h2>
+          <div class="settings-row">
+            <label class="settings-toggle" for="invert-mouse-toggle">
+              <input id="invert-mouse-toggle" type="checkbox" />
+              <span>Invert Mouse (Y-axis)</span>
+            </label>
+          </div>
+          <div class="settings-row">
+            <label class="settings-volume-label" for="music-volume-slider">
+              <span>Music Volume</span>
+              <span id="music-volume-value">25%</span>
+            </label>
+            <input id="music-volume-slider" type="range" min="0" max="100" step="1" value="25" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-volume-label" for="sfx-volume-slider">
+              <span>SFX Volume</span>
+              <span id="sfx-volume-value">100%</span>
+            </label>
+            <input id="sfx-volume-slider" type="range" min="0" max="100" step="1" value="100" />
+          </div>
+        </div>
+        <p id="overlay-loading" aria-live="polite" hidden>Loading assets...</p>
+        <div id="overlay-actions">
+          <button id="start-btn" type="button">Enter Wirehouse</button>
+          <button id="settings-btn" class="secondary" type="button">Settings</button>
+        </div>
       </div>
     </div>
 

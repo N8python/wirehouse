@@ -61,11 +61,18 @@ function createLoopingSound({ src, baseVolume = 1 }) {
   const player = new Audio(src);
   player.preload = "auto";
   player.loop = true;
-  player.volume = safeBaseVolume;
+  let currentVolumeScale = 1;
+
+  function applyVolume() {
+    player.volume = clamp01(safeBaseVolume * currentVolumeScale);
+  }
+
+  applyVolume();
 
   function start({ volumeScale = 1, playbackRate = 1 } = {}) {
+    currentVolumeScale = Number.isFinite(Number(volumeScale)) ? Number(volumeScale) : 1;
     player.playbackRate = Math.max(0.5, Number(playbackRate) || 1);
-    player.volume = clamp01(safeBaseVolume * (Number(volumeScale) || 0));
+    applyVolume();
     try {
       if (player.paused) {
         player.currentTime = 0;
@@ -89,7 +96,12 @@ function createLoopingSound({ src, baseVolume = 1 }) {
     }
   }
 
-  return { start, stop };
+  function setVolumeScale(volumeScale = 1) {
+    currentVolumeScale = Number.isFinite(Number(volumeScale)) ? Number(volumeScale) : 1;
+    applyVolume();
+  }
+
+  return { start, stop, setVolumeScale };
 }
 
 export function createSoundSystem() {
@@ -162,6 +174,8 @@ export function createSoundSystem() {
   };
 
   let userGestureUnlocked = false;
+  let musicVolume = 1;
+  let sfxVolume = 1;
 
   function canPlay() {
     return userGestureUnlocked;
@@ -169,6 +183,20 @@ export function createSoundSystem() {
 
   function markUserGesture() {
     userGestureUnlocked = true;
+  }
+
+  function setVolumes({ music = musicVolume, sfx = sfxVolume } = {}) {
+    musicVolume = clamp01(music);
+    sfxVolume = clamp01(sfx);
+    loops.bgm.setVolumeScale(0.25 * musicVolume);
+    loops.eatJerky.setVolumeScale(1 * sfxVolume);
+  }
+
+  function getVolumes() {
+    return {
+      musicVolume,
+      sfxVolume,
+    };
   }
 
   function stopAll() {
@@ -185,7 +213,7 @@ export function createSoundSystem() {
       return false;
     }
     return pools.footsteps.play({
-      volumeScale: sprint ? 1.05 : 0.9,
+      volumeScale: (sprint ? 1.05 : 0.9) * sfxVolume,
       playbackRate: sprint ? 1.12 : 0.95,
       rateJitter: 0.08,
     });
@@ -207,7 +235,7 @@ export function createSoundSystem() {
     const minDistanceScale = 0.08;
     const distanceScale = minDistanceScale + (1 - minDistanceScale) * attenuation;
     return pools.wiremanFootsteps.play({
-      volumeScale: distanceScale * (sprint ? 1.04 : 0.92),
+      volumeScale: distanceScale * (sprint ? 1.04 : 0.92) * sfxVolume,
       playbackRate: sprint ? 1.03 : 0.94,
       rateJitter: 0.05,
     });
@@ -218,6 +246,7 @@ export function createSoundSystem() {
       return false;
     }
     return pools.wiremanAttack.play({
+      volumeScale: 1 * sfxVolume,
       playbackRate: 0.92,
       rateJitter: 0.06,
     });
@@ -228,7 +257,7 @@ export function createSoundSystem() {
       return false;
     }
     return pools.heartbeat.play({
-      volumeScale: lowStaminaBoost ? 0.55 : 0.5,
+      volumeScale: (lowStaminaBoost ? 0.55 : 0.5) * sfxVolume,
       playbackRate: lowStaminaBoost ? 1.04 : 1.0,
       rateJitter: 0.02,
     });
@@ -239,6 +268,7 @@ export function createSoundSystem() {
       return false;
     }
     return pools.meleeMiss.play({
+      volumeScale: 1 * sfxVolume,
       playbackRate: 1.0,
       rateJitter: 0.12,
     });
@@ -249,6 +279,7 @@ export function createSoundSystem() {
       return false;
     }
     return pools.meleeHitWall.play({
+      volumeScale: 1 * sfxVolume,
       playbackRate: 1.0,
       rateJitter: 0.04,
     });
@@ -259,6 +290,7 @@ export function createSoundSystem() {
       return false;
     }
     return pools.meleeHitWireman.play({
+      volumeScale: 1 * sfxVolume,
       playbackRate: 0.96,
       rateJitter: 0.08,
     });
@@ -269,6 +301,7 @@ export function createSoundSystem() {
       return false;
     }
     return pools.knifeHitWireman.play({
+      volumeScale: 1 * sfxVolume,
       playbackRate: 1,
       rateJitter: 0.05,
     });
@@ -279,6 +312,7 @@ export function createSoundSystem() {
       return false;
     }
     return pools.pistolFire.play({
+      volumeScale: 1 * sfxVolume,
       playbackRate: 1,
       rateJitter: 0.05,
     });
@@ -289,6 +323,7 @@ export function createSoundSystem() {
       return false;
     }
     return pools.eatJerky.play({
+      volumeScale: 1 * sfxVolume,
       playbackRate: 1,
       rateJitter: 0.04,
     });
@@ -300,7 +335,7 @@ export function createSoundSystem() {
     }
     return loops.eatJerky.start({
       playbackRate: 1,
-      volumeScale: 1,
+      volumeScale: 1 * sfxVolume,
     });
   }
 
@@ -314,7 +349,7 @@ export function createSoundSystem() {
     }
     return loops.bgm.start({
       playbackRate: 1,
-      volumeScale: 0.25,
+      volumeScale: 0.25 * musicVolume,
     });
   }
 
@@ -327,6 +362,7 @@ export function createSoundSystem() {
       return false;
     }
     return pools.drinkSoda.play({
+      volumeScale: 1 * sfxVolume,
       playbackRate: 1,
       rateJitter: 0.05,
     });
@@ -334,6 +370,8 @@ export function createSoundSystem() {
 
   return {
     markUserGesture,
+    setVolumes,
+    getVolumes,
     stopAll,
     playFootstep,
     playWiremanFootstep,

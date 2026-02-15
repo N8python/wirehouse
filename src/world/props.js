@@ -433,10 +433,23 @@ export function createWarehousePropScatter({
     }
   }
 
+  async function preloadAllTemplates() {
+    const uniquePaths = [...new Set(PROP_LIBRARY.map((entry) => entry.path))];
+    await Promise.all(
+      uniquePaths.map((path) =>
+        loadTemplate(path).catch((error) => {
+          console.error(`Failed to preload prop template: ${path}`, error);
+          return null;
+        }),
+      ),
+    );
+  }
+
   return {
     root,
     collider,
     regenerate,
+    preloadAllTemplates,
     clear: clearRoot,
   };
 }

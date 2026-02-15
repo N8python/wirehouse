@@ -146,7 +146,7 @@ export function createWorldSystem({
     }
   }
 
-  function regenerateMaze() {
+  async function regenerateMaze() {
     maze = generateMaze(MAZE_COLS, MAZE_ROWS);
     startCell = { col: 1, row: 1 };
     exitCell = findFarthestOpenCell(startCell, isWalkableCell);
@@ -158,8 +158,18 @@ export function createWorldSystem({
     });
 
     rebuildWalls();
-    void propScatter.regenerate({ maze, startCell, exitCell });
-    void pickupSystem.regenerate({ maze, startCell, exitCell });
+    const propRegeneratePromise = Promise.resolve(
+      propScatter.regenerate({ maze, startCell, exitCell }),
+    ).catch((error) => {
+      console.error("Prop regeneration failed:", error);
+      return null;
+    });
+    const pickupRegeneratePromise = Promise.resolve(
+      pickupSystem.regenerate({ maze, startCell, exitCell }),
+    ).catch((error) => {
+      console.error("Pickup regeneration failed:", error);
+      return null;
+    });
     if (exitMarker) {
       scene.remove(exitMarker);
       exitMarker.geometry.dispose();
@@ -167,6 +177,20 @@ export function createWorldSystem({
       exitMarker = null;
     }
     resetPlayerToStart();
+    await Promise.all([propRegeneratePromise, pickupRegeneratePromise]);
+  }
+
+  async function preloadAllAssets() {
+    await Promise.all([
+      Promise.resolve(propScatter.preloadAllTemplates?.()).catch((error) => {
+        console.error("Prop preload failed:", error);
+        return null;
+      }),
+      Promise.resolve(pickupSystem.preloadAllTemplates?.()).catch((error) => {
+        console.error("Pickup preload failed:", error);
+        return null;
+      }),
+    ]);
   }
 
   function isWalkableCell(col, row) {
@@ -351,6 +375,7 @@ export function createWorldSystem({
     createFloorAndCeiling,
     rebuildExitMarker,
     regenerateMaze,
+    preloadAllAssets,
     isWalkableCell,
     cellToWorld,
     worldToCell,

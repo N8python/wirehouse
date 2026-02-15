@@ -45,6 +45,46 @@ THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
+const SETTINGS_STORAGE_KEY = "wirehouse.settings.v1";
+const DEFAULT_PLAYER_SETTINGS = Object.freeze({
+  invertMouseY: false,
+  musicVolume: 0.25,
+  sfxVolume: 1,
+});
+
+function clampSettingVolume(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return THREE.MathUtils.clamp(numeric, 0, 1);
+}
+
+function loadPlayerSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      return { ...DEFAULT_PLAYER_SETTINGS };
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      invertMouseY: Boolean(parsed?.invertMouseY),
+      musicVolume: clampSettingVolume(parsed?.musicVolume, DEFAULT_PLAYER_SETTINGS.musicVolume),
+      sfxVolume: clampSettingVolume(parsed?.sfxVolume, DEFAULT_PLAYER_SETTINGS.sfxVolume),
+    };
+  } catch {
+    return { ...DEFAULT_PLAYER_SETTINGS };
+  }
+}
+
+function persistPlayerSettings(settings) {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // Ignore storage write errors in restricted contexts.
+  }
+}
+
 export function createGameApp() {
   const dom = getDomRefs();
   const constants = createGameConstants({
@@ -71,6 +111,11 @@ export function createGameApp() {
     createPickupSystem,
   });
   const sound = createSoundSystem();
+  const playerSettings = loadPlayerSettings();
+  sound.setVolumes({
+    music: playerSettings.musicVolume,
+    sfx: playerSettings.sfxVolume,
+  });
 
   let hasWon = false;
   let gameActive = false;
@@ -92,6 +137,11 @@ export function createGameApp() {
   let wiremanFootstepHasPreviousPosition = false;
   let wiremanFootstepPreviousX = 0;
   let wiremanFootstepPreviousZ = 0;
+  let initialAssetsReady = false;
+  let startupLoadInProgress = false;
+  let startupLoadMessage = "Loading assets...";
+  let settingsMenuOpen = false;
+  let isPaused = false;
 
   const GAME_OVER_CAMERA_DROP_DURATION_SECONDS = 0.9;
   const GAME_OVER_CAMERA_TARGET_Y = Math.max(0.16, config.PLAYER_RADIUS * 0.45);
@@ -118,6 +168,9 @@ export function createGameApp() {
   const gameOverCameraStartQuaternion = new THREE.Quaternion();
   const gameOverCameraTargetQuaternion = new THREE.Quaternion();
   const gameOverCameraEuler = new THREE.Euler(0, 0, 0, "YXZ");
+  const invertMouseCompensationEuler = new THREE.Euler(0, 0, 0, "YXZ");
+  const MOUSE_SENSITIVITY = 0.002;
+  const HALF_PI = Math.PI * 0.5;
 
   const keyState = {
     forward: false,
@@ -168,32 +221,155 @@ export function createGameApp() {
     dom.status.textContent = text;
   }
 
+  function formatVolumePercent(volume) {
+    return `${Math.round(THREE.MathUtils.clamp(Number(volume) || 0, 0, 1) * 100)}%`;
+  }
+
+  function applyAudioSettings() {
+    sound.setVolumes({
+      music: playerSettings.musicVolume,
+      sfx: playerSettings.sfxVolume,
+    });
+  }
+
+  function syncSettingsUi() {
+    if (dom.invertMouseToggle) {
+      dom.invertMouseToggle.checked = Boolean(playerSettings.invertMouseY);
+    }
+    if (dom.musicVolumeSlider) {
+      dom.musicVolumeSlider.value = String(Math.round(playerSettings.musicVolume * 100));
+    }
+    if (dom.musicVolumeValue) {
+      dom.musicVolumeValue.textContent = formatVolumePercent(playerSettings.musicVolume);
+    }
+    if (dom.sfxVolumeSlider) {
+      dom.sfxVolumeSlider.value = String(Math.round(playerSettings.sfxVolume * 100));
+    }
+    if (dom.sfxVolumeValue) {
+      dom.sfxVolumeValue.textContent = formatVolumePercent(playerSettings.sfxVolume);
+    }
+  }
+
+  function setSettingsMenuOpen(open) {
+    settingsMenuOpen = Boolean(open);
+    if (dom.overlaySettings) {
+      dom.overlaySettings.classList.toggle("hidden", !settingsMenuOpen);
+    }
+    if (dom.settingsButton) {
+      dom.settingsButton.textContent = settingsMenuOpen ? "Close Settings" : "Settings";
+    }
+  }
+
+  function toggleSettingsMenu() {
+    setSettingsMenuOpen(!settingsMenuOpen);
+  }
+
+  function persistAndApplySettings() {
+    applyAudioSettings();
+    persistPlayerSettings(playerSettings);
+    syncSettingsUi();
+  }
+
+  function setOverlayLoadingMessage(text = "") {
+    if (!dom.overlayLoading) {
+      return;
+    }
+    const normalized = typeof text === "string" ? text.trim() : "";
+    dom.overlayLoading.textContent = normalized;
+    dom.overlayLoading.hidden = normalized.length === 0;
+  }
+
+  function setStartButtonDisabled(disabled) {
+    if (!dom.startButton) {
+      return;
+    }
+    dom.startButton.disabled = Boolean(disabled);
+    dom.startButton.setAttribute("aria-disabled", disabled ? "true" : "false");
+  }
+
+  function formatAssetLoadMessage(progress) {
+    const itemsTotal = Math.max(0, Number(progress?.itemsTotal) || 0);
+    const itemsLoaded = Math.min(itemsTotal, Math.max(0, Number(progress?.itemsLoaded) || 0));
+    if (itemsTotal <= 0) {
+      return "Loading assets...";
+    }
+    const percent = Math.round((itemsLoaded / itemsTotal) * 100);
+    return `Loading assets... ${percent}% (${itemsLoaded}/${itemsTotal})`;
+  }
+
+  function refreshStartOverlayGate() {
+    const overlayMode = dom.overlay?.dataset?.mode || "start";
+    if (overlayMode !== "start") {
+      return;
+    }
+    if (!initialAssetsReady || startupLoadInProgress) {
+      if (dom.startButton) {
+        dom.startButton.textContent = "Loading...";
+      }
+      setStartButtonDisabled(true);
+      setOverlayLoadingMessage(startupLoadMessage || "Loading assets...");
+      return;
+    }
+    if (dom.startButton) {
+      dom.startButton.textContent = "Enter Wirehouse";
+    }
+    setStartButtonDisabled(false);
+    setOverlayLoadingMessage("");
+  }
+
   function getFlags() {
-    return { hasWon, gameActive, isTopDownView, isGameOver };
+    return {
+      hasWon,
+      gameActive,
+      isTopDownView,
+      isGameOver,
+      isPaused,
+      assetsReady: initialAssetsReady && !startupLoadInProgress,
+      invertMouseY: Boolean(playerSettings.invertMouseY),
+    };
   }
 
   function setOverlayMode(mode = "start") {
     const winMode = mode === "win";
     const deathMode = mode === "death";
+    const pauseMode = mode === "pause";
     if (dom.overlay) {
       dom.overlay.dataset.mode = mode;
     }
     if (dom.overlayTitle) {
-      dom.overlayTitle.textContent = deathMode ? "Game Over" : winMode ? "Victory" : "Wirehouse";
+      dom.overlayTitle.textContent = deathMode
+        ? "Game Over"
+        : winMode
+          ? "Victory"
+          : pauseMode
+            ? "Paused"
+            : "Wirehouse";
     }
     if (dom.overlaySubtitle) {
       dom.overlaySubtitle.textContent = deathMode
         ? "The Wireman got you in the dark. Re-enter Wirehouse and try again."
         : winMode
           ? "Wireman eliminated. The warehouse is silent for now."
-          : "Enter the warehouse. Scavenge what you can. Survive the Wireman.";
+          : pauseMode
+            ? "Game paused. Adjust settings or resume when ready."
+            : "Enter the warehouse. Scavenge what you can. Survive the Wireman.";
     }
     if (dom.overlayControls) {
-      dom.overlayControls.classList.toggle("hidden", deathMode || winMode);
+      dom.overlayControls.classList.toggle("hidden", deathMode || winMode || pauseMode);
     }
     if (dom.startButton) {
-      dom.startButton.textContent = deathMode ? "Try Again" : winMode ? "Run It Back" : "Enter Wirehouse";
+      dom.startButton.textContent = deathMode
+        ? "Try Again"
+        : winMode
+          ? "Run It Back"
+          : pauseMode
+            ? "Resume"
+            : "Enter Wirehouse";
     }
+    if (deathMode || winMode) {
+      setSettingsMenuOpen(false);
+    }
+    refreshStartOverlayGate();
   }
 
   function clearOverlayFadeState() {
@@ -243,6 +419,7 @@ export function createGameApp() {
 
   function resetGameOverState() {
     isGameOver = false;
+    isPaused = false;
     gameOverCameraElapsed = 0;
     if (dom.deathTint) {
       dom.deathTint.classList.remove("active");
@@ -282,6 +459,7 @@ export function createGameApp() {
       return;
     }
     isGameOver = true;
+    isPaused = false;
     gameActive = false;
     isTopDownView = false;
     resetMovementInput();
@@ -312,6 +490,7 @@ export function createGameApp() {
       return;
     }
     resetWinCountdown();
+    isPaused = false;
     hasWon = true;
     gameActive = false;
     isTopDownView = false;
@@ -646,9 +825,10 @@ export function createGameApp() {
     ctx.fillText(`WIREMAN ${huntModeLabel}  (H)`, 9, 7);
   }
 
-  function regenerateMaze({ silent = false } = {}) {
+  async function regenerateMaze({ silent = false } = {}) {
     hasWon = false;
     gameActive = false;
+    isPaused = false;
     isTopDownView = false;
     resetWinCountdown();
     resetMovementInput();
@@ -662,8 +842,12 @@ export function createGameApp() {
     pistol.reset();
     sound.stopAll();
     inventory.reset();
-    world.regenerateMaze();
+    const regeneratePromise = Promise.resolve(world.regenerateMaze()).catch((error) => {
+      console.error("Maze regeneration failed:", error);
+      return null;
+    });
     wireman.onMazeRegenerated();
+    await regeneratePromise;
     if (!silent) {
       setStatus("New maze generated.");
     }
@@ -755,6 +939,10 @@ export function createGameApp() {
   }
 
   function update(deltaSeconds) {
+    if (isPaused) {
+      updateCrosshairCooldownIndicator();
+      return;
+    }
     elapsed += deltaSeconds;
     if (runtime.foundFootageGrainPass?.uniforms?.time) {
       runtime.foundFootageGrainPass.uniforms.time.value = elapsed;
@@ -936,14 +1124,41 @@ export function createGameApp() {
     mazePerf.renderedFrames += 1;
   }
 
+  function pauseGameplay({ statusText = "Game paused." } = {}) {
+    if (!gameActive || hasWon || isGameOver) {
+      return;
+    }
+    gameActive = false;
+    isPaused = true;
+    isTopDownView = false;
+    health.cancelJerkyConsume();
+    resetMovementInput();
+    sound.stopAll();
+    setSettingsMenuOpen(false);
+    setOverlayMode("pause");
+    showOverlay();
+    dom.crosshair.style.opacity = "0";
+    updateCrosshairCooldownIndicator();
+    setStatus(statusText);
+    if (runtime.canUsePointerLock && runtime.controls.isLocked) {
+      suppressUnlockPause = true;
+      runtime.controls.unlock();
+    }
+  }
+
   function activateGameplay() {
+    if (!initialAssetsReady || startupLoadInProgress) {
+      return;
+    }
     sound.markUserGesture();
     sound.startBgmLoop();
     resetGameOverState();
     resetMovementInput();
+    isPaused = false;
     gameActive = true;
     isTopDownView = false;
     health.cancelJerkyConsume();
+    setSettingsMenuOpen(false);
     hideOverlay();
     dom.crosshair.style.opacity = "1";
     updateCrosshairCooldownIndicator();
@@ -951,6 +1166,27 @@ export function createGameApp() {
     if (runtime.canUsePointerLock && !runtime.controls.isLocked) {
       runtime.controls.lock();
     }
+  }
+
+  async function requestGameplayStart({ allowRegenerate = true } = {}) {
+    sound.markUserGesture();
+    if (!initialAssetsReady || startupLoadInProgress) {
+      return;
+    }
+
+    if ((hasWon || isGameOver) && allowRegenerate) {
+      startupLoadInProgress = true;
+      startupLoadMessage = "Rebuilding maze...";
+      setOverlayMode("start");
+      showOverlay();
+      refreshStartOverlayGate();
+      await regenerateMaze({ silent: true });
+      startupLoadInProgress = false;
+      startupLoadMessage = "";
+      refreshStartOverlayGate();
+    }
+
+    activateGameplay();
   }
 
   function toggleFlashlight() {
@@ -1036,6 +1272,17 @@ export function createGameApp() {
     if (code === "ArrowLeft" || code === "ArrowRight" || code === "Space") {
       event.preventDefault();
     }
+    if (code === "Escape") {
+      event.preventDefault();
+      if (gameActive && !hasWon && !isGameOver) {
+        pauseGameplay({ statusText: "Game paused. Press Resume to continue." });
+        return;
+      }
+      if (!gameActive && isPaused && settingsMenuOpen) {
+        setSettingsMenuOpen(false);
+      }
+      return;
+    }
     if (!DEBUG_KEY_ENABLED && DEBUG_KEY_CODES.has(code)) {
       return;
     }
@@ -1056,7 +1303,7 @@ export function createGameApp() {
     if (code === "KeyH") toggleWiremanMinimap();
     if (code === "Slash") teleportPlayerToWireman();
     if (code === "KeyO") toggleN8AODebugView();
-    if (code === "KeyN") regenerateMaze();
+    if (code === "KeyN") void regenerateMaze();
     if (code === "KeyE") inventory.tryPickupNearest();
     if (code === "KeyQ") void inventory.dropSelectedItem();
     if (code === "KeyI") inventory.grantDebugInventory();
@@ -1097,6 +1344,29 @@ export function createGameApp() {
   function onPointerUp(event) {
     if (event.type !== "pointercancel" && event.button !== 0) return;
     health.cancelJerkyConsume(health.getActiveConsumableCancelStatus());
+  }
+
+  function onMouseMoveInvertCompensation(event) {
+    if (!playerSettings.invertMouseY) {
+      return;
+    }
+    if (!runtime.controls.isLocked || runtime.controls.enabled === false) {
+      return;
+    }
+    const movementY = Number(event.movementY) || 0;
+    if (movementY === 0) {
+      return;
+    }
+
+    invertMouseCompensationEuler.setFromQuaternion(runtime.camera.quaternion);
+    invertMouseCompensationEuler.x +=
+      movementY * MOUSE_SENSITIVITY * runtime.controls.pointerSpeed * 2;
+    invertMouseCompensationEuler.x = THREE.MathUtils.clamp(
+      invertMouseCompensationEuler.x,
+      HALF_PI - runtime.controls.maxPolarAngle,
+      HALF_PI - runtime.controls.minPolarAngle,
+    );
+    runtime.camera.quaternion.setFromEuler(invertMouseCompensationEuler);
   }
 
   async function toggleFullscreen() {
@@ -1147,15 +1417,31 @@ export function createGameApp() {
     isFlashlightEmissionActive: () => flashlightEnabled && !inventory.isFlashlightSuppressedByTwoHandedBat(),
     isFlashlightSuppressedByTwoHandedBat: inventory.isFlashlightSuppressedByTwoHandedBat,
     getPlayerJumpState: playerView.getJumpState,
+    getPlayerSettings: () => ({ ...playerSettings }),
   });
 
   function setupInteractions() {
     dom.startButton.addEventListener("click", () => {
+      void requestGameplayStart({ allowRegenerate: true });
+    });
+    dom.settingsButton?.addEventListener("click", () => {
       sound.markUserGesture();
-      if (hasWon || isGameOver) {
-        regenerateMaze();
-      }
-      activateGameplay();
+      toggleSettingsMenu();
+    });
+    dom.invertMouseToggle?.addEventListener("change", (event) => {
+      playerSettings.invertMouseY = Boolean(event.target?.checked);
+      persistPlayerSettings(playerSettings);
+      syncSettingsUi();
+    });
+    dom.musicVolumeSlider?.addEventListener("input", (event) => {
+      const sliderValue = Number(event.target?.value);
+      playerSettings.musicVolume = clampSettingVolume(sliderValue / 100, playerSettings.musicVolume);
+      persistAndApplySettings();
+    });
+    dom.sfxVolumeSlider?.addEventListener("input", (event) => {
+      const sliderValue = Number(event.target?.value);
+      playerSettings.sfxVolume = clampSettingVolume(sliderValue / 100, playerSettings.sfxVolume);
+      persistAndApplySettings();
     });
     runtime.renderer.domElement.addEventListener("click", () => {
       sound.markUserGesture();
@@ -1163,7 +1449,7 @@ export function createGameApp() {
         if (isGameOver || hasWon) {
           return;
         }
-        activateGameplay();
+        void requestGameplayStart({ allowRegenerate: false });
       } else if (runtime.canUsePointerLock && !runtime.controls.isLocked) {
         runtime.controls.lock();
       }
@@ -1171,6 +1457,7 @@ export function createGameApp() {
     runtime.renderer.domElement.addEventListener("pointerdown", onPointerDown);
     runtime.renderer.domElement.addEventListener("pointerup", onPointerUp);
     runtime.renderer.domElement.addEventListener("pointercancel", onPointerUp);
+    document.addEventListener("mousemove", onMouseMoveInvertCompensation);
 
     runtime.controls.addEventListener("lock", () => {
       if (isGameOver || hasWon) {
@@ -1193,21 +1480,29 @@ export function createGameApp() {
         return;
       }
       if (isGameOver) {
+        isPaused = false;
         isTopDownView = false;
         dom.crosshair.style.opacity = "0";
         showOverlay();
         return;
       }
       if (runtime.canUsePointerLock) {
-        gameActive = false;
-        isTopDownView = false;
-        dom.crosshair.style.opacity = "0.25";
         if (hasWon) {
+          isPaused = false;
           showOverlay();
           return;
         }
-        hideOverlay();
-        setStatus("Pointer unlocked. Adjust settings, then click the scene to resume.");
+        if (gameActive) {
+          pauseGameplay({
+            statusText: "Game paused. Press Resume to continue.",
+          });
+          return;
+        }
+        if (isPaused) {
+          setOverlayMode("pause");
+          showOverlay();
+          dom.crosshair.style.opacity = "0";
+        }
       }
     });
     window.addEventListener("keydown", onKeyDown);
@@ -1232,10 +1527,42 @@ export function createGameApp() {
     });
   }
 
+  async function initializeStartupAssets() {
+    startupLoadInProgress = true;
+    startupLoadMessage = "Loading assets...";
+    refreshStartOverlayGate();
+    const unsubscribeAssetProgress = runtime.subscribeAssetLoadProgress((progress) => {
+      if (initialAssetsReady) {
+        return;
+      }
+      startupLoadMessage = formatAssetLoadMessage(progress);
+      refreshStartOverlayGate();
+    });
+
+    try {
+      await world.preloadAllAssets();
+      await regenerateMaze({ silent: true });
+      await runtime.waitForInitialAssetLoad();
+      initialAssetsReady = true;
+      startupLoadMessage = "";
+      setStatus("Assets loaded. Press Enter Wirehouse to begin.");
+    } catch (error) {
+      console.error("Initial asset loading failed:", error);
+      initialAssetsReady = true;
+      startupLoadMessage = "";
+      setStatus("Some assets failed to preload. Gameplay may show missing visuals or audio.");
+    } finally {
+      startupLoadInProgress = false;
+      unsubscribeAssetProgress?.();
+      refreshStartOverlayGate();
+    }
+  }
+
   world.createFloorAndCeiling();
   setOverlayMode("start");
-  regenerateMaze({ silent: true });
   setupInteractions();
+  syncSettingsUi();
+  setSettingsMenuOpen(false);
   inventory.initInventoryRadial();
   heldItemDisplay.init();
   inventory.updateInventoryHud();
@@ -1243,4 +1570,5 @@ export function createGameApp() {
   inventory.updatePickupPrompt();
   render();
   runtime.renderer.setAnimationLoop(animationFrame);
+  void initializeStartupAssets();
 }

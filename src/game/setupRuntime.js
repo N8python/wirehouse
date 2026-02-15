@@ -134,8 +134,96 @@ export function createRuntime({
   composer.setPixelRatio(initialPixelRatio);
   composer.setSize(window.innerWidth, window.innerHeight);
 
-  const textureLoader = new THREE.TextureLoader();
-  const modelLoader = new GLTFLoader();
+  const assetLoadListeners = new Set();
+  const assetLoadState = {
+    started: false,
+    completed: false,
+    itemsLoaded: 0,
+    itemsTotal: 0,
+    errorCount: 0,
+  };
+  const loadingManager = new THREE.LoadingManager();
+  let initialAssetLoadResolved = false;
+  let resolveInitialAssetLoad = () => {};
+  const initialAssetLoadPromise = new Promise((resolve) => {
+    resolveInitialAssetLoad = resolve;
+  });
+
+  function getAssetLoadProgress() {
+    const itemsLoaded = Math.max(0, Number(assetLoadState.itemsLoaded) || 0);
+    const itemsTotal = Math.max(0, Number(assetLoadState.itemsTotal) || 0);
+    const rawPercent = itemsTotal > 0 ? itemsLoaded / itemsTotal : assetLoadState.completed ? 1 : 0;
+    const percent = THREE.MathUtils.clamp(rawPercent, 0, 1);
+    return {
+      started: Boolean(assetLoadState.started),
+      completed: Boolean(assetLoadState.completed),
+      itemsLoaded,
+      itemsTotal,
+      errorCount: Math.max(0, Number(assetLoadState.errorCount) || 0),
+      percent,
+    };
+  }
+
+  function notifyAssetLoadProgress() {
+    const snapshot = getAssetLoadProgress();
+    for (const listener of assetLoadListeners) {
+      try {
+        listener(snapshot);
+      } catch (error) {
+        console.error("Asset progress listener failed:", error);
+      }
+    }
+  }
+
+  function finalizeInitialAssetLoadIfNeeded() {
+    if (initialAssetLoadResolved) {
+      return;
+    }
+    initialAssetLoadResolved = true;
+    resolveInitialAssetLoad(getAssetLoadProgress());
+  }
+
+  function subscribeAssetLoadProgress(listener) {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+    assetLoadListeners.add(listener);
+    listener(getAssetLoadProgress());
+    return () => {
+      assetLoadListeners.delete(listener);
+    };
+  }
+
+  loadingManager.onStart = (_url, itemsLoaded, itemsTotal) => {
+    assetLoadState.started = true;
+    assetLoadState.completed = false;
+    assetLoadState.itemsLoaded = itemsLoaded;
+    assetLoadState.itemsTotal = itemsTotal;
+    notifyAssetLoadProgress();
+  };
+  loadingManager.onProgress = (_url, itemsLoaded, itemsTotal) => {
+    assetLoadState.started = true;
+    assetLoadState.itemsLoaded = itemsLoaded;
+    assetLoadState.itemsTotal = itemsTotal;
+    notifyAssetLoadProgress();
+  };
+  loadingManager.onError = () => {
+    assetLoadState.errorCount += 1;
+    notifyAssetLoadProgress();
+  };
+  loadingManager.onLoad = () => {
+    assetLoadState.started = true;
+    assetLoadState.completed = true;
+    assetLoadState.itemsLoaded = Math.max(
+      Number(assetLoadState.itemsLoaded) || 0,
+      Number(assetLoadState.itemsTotal) || 0,
+    );
+    notifyAssetLoadProgress();
+    finalizeInitialAssetLoadIfNeeded();
+  };
+
+  const textureLoader = new THREE.TextureLoader(loadingManager);
+  const modelLoader = new GLTFLoader(loadingManager);
   const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
   const { loadTextureSet, loadSpotlightMapTexture } = createTextureHelpers({
     textureLoader,
@@ -495,5 +583,8 @@ export function createRuntime({
     bulletDecalLitMaterial,
     bulletDecalDebugMaterial,
     flashlightState,
+    waitForInitialAssetLoad: () => initialAssetLoadPromise,
+    getAssetLoadProgress,
+    subscribeAssetLoadProgress,
   };
 }

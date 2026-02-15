@@ -18,6 +18,7 @@ export function createRenderGameToText({
   isFlashlightEmissionActive,
   isFlashlightSuppressedByTwoHandedBat,
   getPlayerJumpState,
+  getPlayerSettings,
 }) {
   const {
     PLAYER_MAX_HEALTH,
@@ -61,6 +62,7 @@ export function createRenderGameToText({
     const staminaRatio = PLAYER_MAX_STAMINA > 0 ? healthState.playerStamina / PLAYER_MAX_STAMINA : 0;
     const wiremanState = wireman?.getState?.() || null;
     const jumpState = getPlayerJumpState?.() || null;
+    const playerSettings = getPlayerSettings?.() || null;
     const lastPistolHitPayload = pistolState.lastPistolHitInfo
       ? {
           ...pistolState.lastPistolHitInfo,
@@ -95,6 +97,9 @@ export function createRenderGameToText({
         won: flags.hasWon,
         gameOver: Boolean(flags.isGameOver),
         gameActive: flags.gameActive,
+        paused: Boolean(flags.isPaused),
+        assetsReady: Boolean(flags.assetsReady),
+        invertMouseY: Boolean(flags.invertMouseY),
         topDownView: flags.isTopDownView,
         flashlightOn: isFlashlightEmissionActive(),
         flashlightSuppressedByTwoHandedBat: isFlashlightSuppressedByTwoHandedBat(),
@@ -119,6 +124,11 @@ export function createRenderGameToText({
         firstAidRegenSeconds: round(healthState.firstAidRegenRemaining),
         speedMultiplier: round(health.getPlayerSpeedMultiplier()),
         lowStaminaHeartbeatBoost: healthState.lowStaminaHeartbeatBoostActive,
+      },
+      settings: {
+        invertMouseY: Boolean(playerSettings?.invertMouseY),
+        musicVolumePercent: round((Number(playerSettings?.musicVolume) || 0) * 100),
+        sfxVolumePercent: round((Number(playerSettings?.sfxVolume) || 0) * 100),
       },
       health: {
         current: round(healthState.playerHealth),

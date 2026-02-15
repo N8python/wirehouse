@@ -543,10 +543,22 @@ export function createPickupSystem({
       .catch(() => null);
   }
 
+  async function preloadAllTemplates() {
+    await Promise.all(
+      PICKUP_LIBRARY.map((entry) =>
+        loadTemplate(entry).catch((error) => {
+          console.error(`Failed to preload pickup template: ${entry.path}`, error);
+          return null;
+        }),
+      ),
+    );
+  }
+
   return {
     root,
     clear,
     regenerate,
+    preloadAllTemplates,
     update,
     findNearestPickup,
     pickupNearest,

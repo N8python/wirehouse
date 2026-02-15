@@ -970,3 +970,97 @@ Original prompt: Make a traditional Wolfenstein-like maze in ThreeJS and procedu
 - Updated found-footage grain PRNG approach per follow-up:
   - Removed CPU noise texture path.
   - Grain/static now generated fully in-shader using a higher-quality hash-without-sine PRNG (`prng(vec3)`), replacing the earlier weaker hash pattern.
+- Added an explicit startup loading gate so gameplay cannot begin until initial assets are loaded:
+  - Introduced a dedicated overlay loading line (`#overlay-loading`) plus disabled-button styling in `index.html`.
+  - Added DOM reference wiring for `overlayLoading` in `src/game/domRefs.js`.
+  - Added runtime asset-load progress tracking in `src/game/setupRuntime.js` via a shared `THREE.LoadingManager` used by both `TextureLoader` and `GLTFLoader`.
+  - Exposed `waitForInitialAssetLoad()`, `getAssetLoadProgress()`, and `subscribeAssetLoadProgress()` from runtime.
+  - Added preload hooks:
+    - `preloadAllTemplates()` in `src/world/props.js`
+    - `preloadAllTemplates()` in `src/world/pickups.js`
+    - `preloadAllAssets()` in `src/game/systems/worldSystem.js`
+  - Made maze regeneration awaitable:
+    - `world.regenerateMaze()` now awaits async prop/pickup regeneration.
+    - `regenerateMaze()` in `src/game/app.js` is now async and awaits world regeneration.
+  - Startup flow now preloads assets + maze content before enabling start:
+    - `initializeStartupAssets()` in `src/game/app.js` subscribes to load progress, updates overlay loading text, and only enables start once complete.
+    - Start/resume activation paths now gate on `initialAssetsReady` and loading-in-progress state.
+    - Added `flags.assetsReady` to `render_game_to_text` output (`src/game/renderGameToText.js`).
+- Validation:
+  - Skill client run: `output/loading-gate-client/shot-0.png`, `shot-1.png`, `shot-2.png`, `state-0.json`, `state-1.json`, `state-2.json`.
+  - Verified transition from paused start overlay to playing state (`state-1.json`/`state-2.json` with `flags.assetsReady=true`, `flags.gameActive=true`).
+  - No Playwright error artifact emitted for final run (`output/loading-gate-client/errors-*.json` absent).
+  - Additional startup-gate probe (Playwright script) confirmed:
+    - initial load period shows disabled start button + loading text/progress,
+    - start button only becomes enabled after assets report ready.
+- Added an in-overlay settings menu for mouse/audio control:
+  - New settings panel in `index.html` with:
+    - `Invert Mouse (Y-axis)` checkbox
+    - `Music Volume` slider + live percent
+    - `SFX Volume` slider + live percent
+  - Added settings toggle button (`Settings` / `Close Settings`) alongside the start button.
+  - Added styling for settings panel and secondary action button, preserving existing visual language.
+- Added settings DOM hooks in `src/game/domRefs.js` for all new controls.
+- Added persisted player settings in `src/game/app.js`:
+  - Storage key: `wirehouse.settings.v1`
+  - Defaults: invert mouse off, music 25%, sfx 100%
+  - UI sync + persistence on change
+  - Settings are loaded on boot and applied immediately.
+- Implemented invert mouse (Y-axis) in `src/game/app.js`:
+  - Added pointer-lock mousemove compensation that flips vertical look while preserving horizontal look direction.
+  - Compensation runs only when controls are locked and invert setting is enabled.
+- Implemented music/sfx volume controls in `src/game/systems/soundSystem.js`:
+  - Added category volume state (`music`, `sfx`) and public `setVolumes()` / `getVolumes()` API.
+  - Routed all SFX playback through `sfx` volume multiplier.
+  - Routed BGM through `music` volume multiplier.
+  - Added loop-time volume updates for active looping sounds so slider changes apply immediately.
+- Added settings visibility in debug text state:
+  - `render_game_to_text` now includes `flags.invertMouseY` and a `settings` payload with `invertMouseY`, `musicVolumePercent`, and `sfxVolumePercent`.
+
+Validation:
+- Skill client regression run:
+  - `output/settings-menu-client/shot-0.png`, `shot-1.png`, `shot-2.png`
+  - `output/settings-menu-client/state-0.json`, `state-1.json`, `state-2.json`
+  - No error artifacts emitted (`errors-*.json` absent).
+- Targeted settings verification:
+  - `output/settings-menu-validation/settings-open.png` (menu visible)
+  - `output/settings-menu-validation/settings-updated.png` (invert+slider changes reflected)
+  - `output/settings-menu-validation/state-after-start.json` confirms gameplay started with updated settings values.
+  - `output/settings-menu-validation/ui-state.json` confirms control values/labels.
+- Persistence check via Playwright reload in same browser context:
+  - Confirmed settings survive reload (`invert=true`, `music=60`, `sfx=45`).
+- Formalized pause behavior (Escape + pause menu) in `src/game/app.js`:
+  - Added explicit pause state (`isPaused`) separate from start/game-over/win.
+  - Added new overlay mode `pause` in `setOverlayMode()`:
+    - title: `Paused`
+    - subtitle: `Game paused. Adjust settings or resume when ready.`
+    - primary action: `Resume`
+    - controls list hidden while paused.
+  - Added `pauseGameplay()` helper that performs a full pause:
+    - sets `gameActive=false`, `isPaused=true`, exits top-down view,
+    - cancels active consumable use,
+    - resets movement input,
+    - stops all audio,
+    - shows pause overlay and hides crosshair.
+  - `Escape` key now explicitly pauses gameplay via `pauseGameplay()` (and closes settings if already paused/open).
+  - Pointer unlock flow now maps to pause menu instead of the prior "pointer unlocked" hidden-overlay state.
+  - Resume path (`activateGameplay`) now clears pause state and closes settings.
+- Implemented pause freeze semantics:
+  - `update()` now early-returns while paused, freezing simulation advancement.
+  - Verified frozen state by sampling `render_game_to_text` twice ~1.4s apart while paused; player and wireman positions were unchanged.
+- Extended text state for pause observability:
+  - Added `flags.paused` to `render_game_to_text` output.
+
+Validation:
+- Skill client regression run after pause changes:
+  - `output/pause-menu-client/shot-0.png`, `shot-1.png`, `shot-2.png`
+  - `output/pause-menu-client/state-0.json`, `state-1.json`, `state-2.json`
+  - No `errors-*.json` emitted.
+- Targeted pause-menu flow validation:
+  - `output/pause-menu-validation/pause-menu.png` (pause menu visible after Escape)
+  - `output/pause-menu-validation/pause-menu-settings-open.png` (settings panel reachable from pause menu)
+  - `output/pause-menu-validation/paused-snapshot.json` confirms:
+    - `overlayMode="pause"`, `title="Paused"`, `startLabel="Resume"`,
+    - game state `flags.paused=true` and `flags.gameActive=false` while paused.
+  - `output/pause-menu-validation/state-resumed.json` confirms resume returns to `mode="playing"`, `flags.gameActive=true`, `flags.paused=false`.
+  - Freeze check: `output/pause-menu-validation/pause-freeze-check.json` confirms no player/wireman movement while paused.
