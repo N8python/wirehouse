@@ -48,6 +48,7 @@ THREE.Mesh.prototype.raycast = acceleratedRaycast;
 const SETTINGS_STORAGE_KEY = "wirehouse.settings.v1";
 const DEFAULT_PLAYER_SETTINGS = Object.freeze({
   invertMouseY: false,
+  enableDebugKeys: false,
   musicVolume: 0.25,
   sfxVolume: 1,
 });
@@ -69,6 +70,7 @@ function loadPlayerSettings() {
     const parsed = JSON.parse(raw);
     return {
       invertMouseY: Boolean(parsed?.invertMouseY),
+      enableDebugKeys: Boolean(parsed?.enableDebugKeys),
       musicVolume: clampSettingVolume(parsed?.musicVolume, DEFAULT_PLAYER_SETTINGS.musicVolume),
       sfxVolume: clampSettingVolume(parsed?.sfxVolume, DEFAULT_PLAYER_SETTINGS.sfxVolume),
     };
@@ -148,7 +150,6 @@ export function createGameApp() {
   const GAME_OVER_CAMERA_TARGET_ROLL_RADIANS = Math.PI * 0.5;
   const RESULT_OVERLAY_FADE_DURATION_SECONDS = 3;
   const WIREMAN_WIN_SCREEN_DELAY_SECONDS = 5;
-  const DEBUG_KEY_ENABLED = false;
   const DEBUG_KEY_CODES = new Set([
     "KeyH",
     "Slash",
@@ -192,8 +193,52 @@ export function createGameApp() {
     renderedFrames: 0,
     startTimeMs: performance.now(),
   };
+  const wiremanPerf = {
+    sampleCount: 0,
+    totalMs: 0,
+    lastMs: 0,
+    maxMs: 0,
+    recentMs: [],
+  };
+  const WIREMAN_PERF_RECENT_LIMIT = 900;
   const wiremanMinimapCtx = dom.wiremanMinimap?.getContext("2d") || null;
   window.__mazePerf = mazePerf;
+
+  function resetWiremanPerf() {
+    wiremanPerf.sampleCount = 0;
+    wiremanPerf.totalMs = 0;
+    wiremanPerf.lastMs = 0;
+    wiremanPerf.maxMs = 0;
+    wiremanPerf.recentMs.length = 0;
+  }
+
+  function percentile(values, ratio) {
+    if (!Array.isArray(values) || !values.length) {
+      return 0;
+    }
+    const safeRatio = THREE.MathUtils.clamp(Number(ratio) || 0, 0, 1);
+    const sorted = values.slice().sort((a, b) => a - b);
+    const index = Math.min(sorted.length - 1, Math.floor(safeRatio * (sorted.length - 1)));
+    return sorted[index];
+  }
+
+  function getWiremanPerfSnapshot() {
+    const sampleCount = wiremanPerf.sampleCount;
+    const avgMs = sampleCount > 0 ? wiremanPerf.totalMs / sampleCount : 0;
+    return {
+      sampleCount,
+      avgMs,
+      p50Ms: percentile(wiremanPerf.recentMs, 0.5),
+      p95Ms: percentile(wiremanPerf.recentMs, 0.95),
+      maxMs: wiremanPerf.maxMs,
+      lastMs: wiremanPerf.lastMs,
+    };
+  }
+
+  window.__wiremanPerf = {
+    reset: resetWiremanPerf,
+    getSnapshot: getWiremanPerfSnapshot,
+  };
 
   const world = createWorldSystem({
     THREE,
@@ -235,6 +280,9 @@ export function createGameApp() {
   function syncSettingsUi() {
     if (dom.invertMouseToggle) {
       dom.invertMouseToggle.checked = Boolean(playerSettings.invertMouseY);
+    }
+    if (dom.debugKeysToggle) {
+      dom.debugKeysToggle.checked = Boolean(playerSettings.enableDebugKeys);
     }
     if (dom.musicVolumeSlider) {
       dom.musicVolumeSlider.value = String(Math.round(playerSettings.musicVolume * 100));
@@ -326,6 +374,7 @@ export function createGameApp() {
       isPaused,
       assetsReady: initialAssetsReady && !startupLoadInProgress,
       invertMouseY: Boolean(playerSettings.invertMouseY),
+      debugKeysEnabled: Boolean(playerSettings.enableDebugKeys),
     };
   }
 
@@ -651,8 +700,24 @@ export function createGameApp() {
     return Math.round(from + (to - from) * t);
   }
 
-  function getWiremanMinimapScoreColor(score, maxScore) {
-    const normalized = THREE.MathUtils.clamp(maxScore > 0 ? score / maxScore : 0, 0, 1);
+  function getWiremanMinimapScoreColor(score, scale) {
+    const probability = Math.max(0, Number(score) || 0);
+    const maxScore = Math.max(0, Number(scale?.max) || 0);
+    const minPositive = Math.max(0, Number(scale?.minPositive) || 0);
+    let normalized = 0;
+    if (probability > 0 && maxScore > 0) {
+      if (minPositive > 0 && maxScore > minPositive * 1.0001) {
+        const logFloor = Math.max(minPositive * 0.25, maxScore * 1e-6);
+        const safeScore = Math.max(probability, logFloor);
+        const logMin = Math.log(logFloor);
+        const logMax = Math.log(maxScore);
+        normalized =
+          logMax > logMin ? (Math.log(safeScore) - logMin) / (logMax - logMin) : probability / maxScore;
+      } else {
+        normalized = probability / maxScore;
+      }
+    }
+    normalized = Math.pow(THREE.MathUtils.clamp(normalized, 0, 1), 0.55);
     const colorStops = [
       [8, 18, 28],
       [19, 66, 72],
@@ -697,7 +762,28 @@ export function createGameApp() {
 
     const wiremanState = wireman.getState();
     const playerCell = world.worldToCell(runtime.camera.position.x, runtime.camera.position.z);
-    const scoreMax = wireman.getHuntScoreMax?.() || 0.1;
+    const beliefPeak = Math.max(
+      0,
+      Number(wiremanState?.beliefPeak),
+      Number(wireman.getHuntScoreMax?.()),
+      0,
+    );
+    let minPositiveBelief = Number.POSITIVE_INFINITY;
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        if (maze[row][col] === 1) {
+          continue;
+        }
+        const belief = Math.max(0, Number(wireman.getHuntScoreForCell?.(col, row)) || 0);
+        if (belief > 0 && belief < minPositiveBelief) {
+          minPositiveBelief = belief;
+        }
+      }
+    }
+    const scoreScale = {
+      max: Math.max(0.000001, beliefPeak),
+      minPositive: Number.isFinite(minPositiveBelief) ? minPositiveBelief : 0,
+    };
     const pathCells = wireman.getPathCells?.() || [];
     const pathIndex = wireman.getPathIndex?.() || 0;
     const headerHeight = 22;
@@ -716,8 +802,8 @@ export function createGameApp() {
         if (maze[row][col] === 1) {
           ctx.fillStyle = "#6f7882";
         } else {
-          const score = wireman.getHuntScoreForCell?.(col, row) ?? scoreMax;
-          ctx.fillStyle = getWiremanMinimapScoreColor(score, scoreMax);
+          const score = wireman.getHuntScoreForCell?.(col, row) ?? 0;
+          ctx.fillStyle = getWiremanMinimapScoreColor(score, scoreScale);
         }
         ctx.fillRect(x, y, cellSize, cellSize);
       }
@@ -822,7 +908,8 @@ export function createGameApp() {
     ctx.font = "11px monospace";
     ctx.textBaseline = "top";
     const huntModeLabel = (wiremanState?.huntMode || "hunt").toUpperCase();
-    ctx.fillText(`WIREMAN ${huntModeLabel}  (H)`, 9, 7);
+    const beliefPeakPercent = Math.round(THREE.MathUtils.clamp(scoreScale.max, 0, 1) * 100);
+    ctx.fillText(`WIREMAN ${huntModeLabel}  Pmax ${beliefPeakPercent}%  (H)`, 9, 7);
   }
 
   async function regenerateMaze({ silent = false } = {}) {
@@ -992,7 +1079,17 @@ export function createGameApp() {
         isSprintActive: sprintActive,
       });
     }
+    const wiremanUpdateStartMs = performance.now();
     wireman.update(deltaSeconds, { gameActive, hasWon, isTopDownView });
+    const wiremanUpdateDurationMs = performance.now() - wiremanUpdateStartMs;
+    wiremanPerf.sampleCount += 1;
+    wiremanPerf.totalMs += wiremanUpdateDurationMs;
+    wiremanPerf.lastMs = wiremanUpdateDurationMs;
+    wiremanPerf.maxMs = Math.max(wiremanPerf.maxMs, wiremanUpdateDurationMs);
+    wiremanPerf.recentMs.push(wiremanUpdateDurationMs);
+    if (wiremanPerf.recentMs.length > WIREMAN_PERF_RECENT_LIMIT) {
+      wiremanPerf.recentMs.shift();
+    }
     const wiremanState = wireman.getState?.() || null;
     if (!isGameOver && gameActive && !hasWon && health.getState().playerHealth <= 0) {
       triggerGameOver();
@@ -1283,7 +1380,7 @@ export function createGameApp() {
       }
       return;
     }
-    if (!DEBUG_KEY_ENABLED && DEBUG_KEY_CODES.has(code)) {
+    if (!playerSettings.enableDebugKeys && DEBUG_KEY_CODES.has(code)) {
       return;
     }
     if ((code === "ArrowLeft" || code === "ArrowRight") && event.repeat) {
@@ -1430,6 +1527,11 @@ export function createGameApp() {
     });
     dom.invertMouseToggle?.addEventListener("change", (event) => {
       playerSettings.invertMouseY = Boolean(event.target?.checked);
+      persistPlayerSettings(playerSettings);
+      syncSettingsUi();
+    });
+    dom.debugKeysToggle?.addEventListener("change", (event) => {
+      playerSettings.enableDebugKeys = Boolean(event.target?.checked);
       persistPlayerSettings(playerSettings);
       syncSettingsUi();
     });

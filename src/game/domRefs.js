@@ -11,6 +11,7 @@ export function getDomRefs() {
     startButton: document.querySelector("#start-btn"),
     settingsButton: document.querySelector("#settings-btn"),
     invertMouseToggle: document.querySelector("#invert-mouse-toggle"),
+    debugKeysToggle: document.querySelector("#debug-keys-toggle"),
     musicVolumeSlider: document.querySelector("#music-volume-slider"),
     musicVolumeValue: document.querySelector("#music-volume-value"),
     sfxVolumeSlider: document.querySelector("#sfx-volume-slider"),

@@ -703,42 +703,6 @@ export function createWiremanSystem({
     return [{ col: fromCell.col, row: fromCell.row }];
   }
 
-  function computeSingleSourcePathCosts(fromCellInput) {
-    const fromCell = findNearestWalkableCell(fromCellInput, fromCellInput);
-    if (!fromCell) {
-      return {
-        fromCell: null,
-        fromKey: "",
-        costByKey: new Map(),
-      };
-    }
-
-    const fromKey = makeCellKey(fromCell.col, fromCell.row);
-    const costByKey = new Map([[fromKey, 0]]);
-    const keyQueue = [fromKey];
-    let queueIndex = 0;
-
-    while (queueIndex < keyQueue.length) {
-      const currentKey = keyQueue[queueIndex];
-      queueIndex += 1;
-      const currentCost = costByKey.get(currentKey) || 0;
-      const neighborKeys = wiremanNeighborKeysByCellKey.get(currentKey) || [];
-      for (const neighborKey of neighborKeys) {
-        if (costByKey.has(neighborKey)) {
-          continue;
-        }
-        costByKey.set(neighborKey, currentCost + 1);
-        keyQueue.push(neighborKey);
-      }
-    }
-
-    return {
-      fromCell,
-      fromKey,
-      costByKey,
-    };
-  }
-
   function chooseSpawnCell() {
     const exitCell = world.getExitCell?.();
     if (exitCell && world.isWalkableCell(exitCell.col, exitCell.row)) {
@@ -1104,48 +1068,43 @@ export function createWiremanSystem({
       return { targetCell: cloneCell(fallbackGoalCell || null), path: [] };
     }
 
-    const shortestPathData = computeSingleSourcePathCosts(fromCell);
-    const normalizedFromCell =
-      shortestPathData.fromCell || findNearestWalkableCell(fromCell, fromCell);
-    if (!normalizedFromCell) {
-      return { targetCell: cloneCell(fallbackGoalCell || null), path: [] };
-    }
-
     let bestCell = null;
+    let bestPath = [];
     let bestUtility = Number.NEGATIVE_INFINITY;
     for (const candidateCell of wiremanWalkableBeliefCells) {
-      const candidateKey = candidateCell.key || makeCellKey(candidateCell.col, candidateCell.row);
-      const shortestCost = shortestPathData.costByKey.get(candidateKey);
-      const pathCost = Number.isFinite(shortestCost) ? Math.max(0, shortestCost) : 0;
+      const path = findAStarPath(fromCell, candidateCell);
+      if (!path.length) {
+        continue;
+      }
+      const pathCost = Math.max(0, path.length - 1);
       let utility =
         computeViewpointInformationGain(candidateCell) / (VIEWPOINT_UTILITY_PATH_BIAS + pathCost);
+      const candidateKey = candidateCell.key || makeCellKey(candidateCell.col, candidateCell.row);
       utility += (wiremanBeliefByKey.get(candidateKey) || 0) * 0.05;
-      if (candidateCell.col === normalizedFromCell.col && candidateCell.row === normalizedFromCell.row) {
+      if (candidateCell.col === fromCell.col && candidateCell.row === fromCell.row) {
         utility *= VIEWPOINT_STAY_PENALTY;
       }
       if (utility > bestUtility) {
         bestUtility = utility;
         bestCell = candidateCell;
+        bestPath = path;
       }
     }
 
-    if (bestCell) {
-      const bestPath = findAStarPath(normalizedFromCell, bestCell);
-      if (bestPath.length) {
-        return {
-          targetCell: cloneCell(bestCell),
-          path: bestPath,
-        };
-      }
+    if (bestCell && bestPath.length) {
+      return {
+        targetCell: cloneCell(bestCell),
+        path: bestPath,
+      };
     }
 
     const fallbackTarget = cloneCell(
-      fallbackGoalCell || chooseMostLikelyBeliefCell(normalizedFromCell) || normalizedFromCell,
+      fallbackGoalCell || chooseMostLikelyBeliefCell(fromCell) || fromCell,
     );
-    const fallbackPath = findAStarPath(normalizedFromCell, fallbackTarget);
+    const fallbackPath = findAStarPath(fromCell, fallbackTarget);
     return {
       targetCell: cloneCell(fallbackTarget),
-      path: fallbackPath.length ? fallbackPath : [cloneCell(normalizedFromCell)],
+      path: fallbackPath.length ? fallbackPath : [cloneCell(fromCell)],
     };
   }
 

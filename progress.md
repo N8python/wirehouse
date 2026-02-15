@@ -1064,3 +1064,38 @@ Validation:
     - game state `flags.paused=true` and `flags.gameActive=false` while paused.
   - `output/pause-menu-validation/state-resumed.json` confirms resume returns to `mode="playing"`, `flags.gameActive=true`, `flags.paused=false`.
   - Freeze check: `output/pause-menu-validation/pause-freeze-check.json` confirms no player/wireman movement while paused.
+- Added a dedicated `Enable Debug Keys` setting toggle end-to-end in settings UI + persistence flow:
+  - UI control: `#debug-keys-toggle` in `index.html`.
+  - DOM ref wiring: `src/game/domRefs.js`.
+  - Persisted setting: `enableDebugKeys` in `wirehouse.settings.v1` defaults/load/save in `src/game/app.js`.
+  - Runtime gating: debug-only keybinds (`H`, `/`, `O`, `N`, `I`, `U`, `B`, `P`, `T`) now honor `playerSettings.enableDebugKeys`.
+- Extended `render_game_to_text` in `src/game/renderGameToText.js` to expose debug setting state:
+  - `flags.debugKeysEnabled`
+  - `settings.debugKeysEnabled`
+- Refactored Wireman AI from heuristic hunt/search scores to a belief-distribution model in `src/game/systems/wiremanSystem.js`:
+  - Added normalized per-cell belief state (`p(player in cell)`) over walkable tiles.
+  - LOS update now collapses belief to observed player cell (single-cell posterior).
+  - No-LOS update now runs prediction + negative-evidence filtering:
+    - Prediction propagates belief through walkable neighbor transitions using player-speed-derived multi-substep diffusion.
+    - Visible cells without observed player are down-weighted by epsilon (`1e-3`) before renormalization.
+  - Removed explicit search-scan state machine; non-LOS navigation now selects max info-gain viewpoints (belief mass visible from candidate tile, path-cost penalized).
+  - Kept chase behavior under direct LOS and sprint/attack handling.
+  - Kept minimap/debug hooks by reusing `getHuntScoreForCell`/`getHuntScoreMax`, now backed by belief probability (`0..1`).
+- Added belief debug info to Wireman state:
+  - `beliefPeakCell`, `beliefPeak` in `wireman.getState()`.
+  - Mirrored into `render_game_to_text` under `wireman` payload.
+
+Validation:
+- Static module syntax check via esbuild bundling for `src/game/systems/wiremanSystem.js` completed successfully.
+- Per user request, skipped Playwright runtime validation.
+- Fixed `H` debug minimap visualization scaling for the new belief-based Wireman AI in `src/game/app.js`:
+  - Heatmap normalization now uses current belief peak probability (`wiremanState.beliefPeak`) instead of the old fixed score range.
+  - Header now shows `Pmax` percentage so posterior concentration is readable while debugging.
+- Validation:
+  - Performed static bundle check for `src/game/app.js` with externals for import-map modules (`three`, `three/*`, `n8ao`, `three-mesh-bvh`); build succeeded.
+- Updated `H` wireman debug minimap probability visualization to a logarithmic scale in `src/game/app.js`:
+  - `getWiremanMinimapScoreColor` now applies log-domain normalization (with floor clamp) before color interpolation.
+  - `renderWiremanMinimap` now computes live belief scale stats (`max`, `minPositive`) from current posterior grid and feeds them into color mapping.
+  - Keeps `Pmax` header while making low-probability posterior structure visible.
+- Validation:
+  - Static `app.js` bundle check via esbuild with import-map externals succeeded.
