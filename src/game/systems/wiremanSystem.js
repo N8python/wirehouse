@@ -1099,6 +1099,26 @@ export function createWiremanSystem({
     return cloneCell(wiremanMostLikelyPlayerCell || fallbackCell || null);
   }
 
+  function chooseRandomWalkableBeliefCell(excludedCell = null) {
+    if (!wiremanWalkableBeliefCells.length) {
+      return null;
+    }
+    if (wiremanWalkableBeliefCells.length === 1) {
+      return cloneCell(wiremanWalkableBeliefCells[0]);
+    }
+    const excludedKey = excludedCell ? makeCellKey(excludedCell.col, excludedCell.row) : "";
+    const startIndex = Math.floor(Math.random() * wiremanWalkableBeliefCells.length);
+    for (let offset = 0; offset < wiremanWalkableBeliefCells.length; offset += 1) {
+      const index = (startIndex + offset) % wiremanWalkableBeliefCells.length;
+      const candidateCell = wiremanWalkableBeliefCells[index];
+      const candidateCellKey = candidateCell.key || makeCellKey(candidateCell.col, candidateCell.row);
+      if (!excludedKey || candidateCellKey !== excludedKey) {
+        return cloneCell(candidateCell);
+      }
+    }
+    return cloneCell(wiremanWalkableBeliefCells[startIndex]);
+  }
+
   function chooseInformationGainPath(fromCell, fallbackGoalCell) {
     if (!fromCell) {
       return { targetCell: cloneCell(fallbackGoalCell || null), path: [] };
@@ -1140,7 +1160,10 @@ export function createWiremanSystem({
     }
 
     const fallbackTarget = cloneCell(
-      fallbackGoalCell || chooseMostLikelyBeliefCell(normalizedFromCell) || normalizedFromCell,
+      fallbackGoalCell ||
+        chooseRandomWalkableBeliefCell(normalizedFromCell) ||
+        chooseMostLikelyBeliefCell(normalizedFromCell) ||
+        normalizedFromCell,
     );
     const fallbackPath = findAStarPath(normalizedFromCell, fallbackTarget);
     return {
@@ -1279,7 +1302,7 @@ export function createWiremanSystem({
       return;
     }
 
-    ensureBeliefModel({ fallbackCell: playerCell });
+    ensureBeliefModel({ fallbackCell: wiremanCell });
 
     wiremanDistanceToPlayer = Math.hypot(
       wiremanRig.position.x - camera.position.x,
@@ -1302,7 +1325,7 @@ export function createWiremanSystem({
       predictBelief(dt);
       applyNegativeBeliefEvidence(wiremanCell);
       normalizeBelief({ observerCell: wiremanCell });
-      updateMostLikelyBeliefCell(playerCell);
+      updateMostLikelyBeliefCell(wiremanCell);
       if (hadLineOfSightLastFrame) {
         wiremanRepathRemaining = 0;
       }
@@ -1412,7 +1435,11 @@ export function createWiremanSystem({
       }
     } else {
       wiremanHuntMode = "investigate";
-      const mostLikelyBeliefCell = chooseMostLikelyBeliefCell(playerCell);
+      const mostLikelyBeliefCell = chooseMostLikelyBeliefCell(wiremanCell);
+      const randomFallbackCell =
+        chooseRandomWalkableBeliefCell(wiremanCell) ||
+        mostLikelyBeliefCell ||
+        cloneCell(wiremanCell);
 
       wiremanRepathRemaining -= dt;
       const shouldRepath =
@@ -1422,11 +1449,13 @@ export function createWiremanSystem({
       if (shouldRepath) {
         const pathSelection = chooseInformationGainPath(
           wiremanCell,
-          mostLikelyBeliefCell || playerCell,
+          randomFallbackCell,
         );
         wiremanPathCells = pathSelection.path;
         wiremanPathIndex = wiremanPathCells.length > 1 ? 1 : 0;
-        wiremanGoalCell = cloneCell(pathSelection.targetCell || mostLikelyBeliefCell || playerCell);
+        wiremanGoalCell = cloneCell(
+          pathSelection.targetCell || randomFallbackCell || mostLikelyBeliefCell || wiremanCell,
+        );
         wiremanGoalKey = wiremanGoalCell
           ? makeCellKey(wiremanGoalCell.col, wiremanGoalCell.row)
           : "";
